@@ -1,0 +1,47 @@
+{
+  "project_info": {
+    "project_number": "818688231359",
+    "project_id": "fitpath-9ac13",
+    "storage_bucket": "fitpath-9ac13.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:818688231359:android:e5fd72d16bf9296c9ac30a",
+        "android_client_info": {
+          "package_name": "com.grittech.goalfit"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "818688231359-rqd82rt5dvcbgjl2jkqpfui1vkvqpqgb.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.grittech.goalfit",
+            "certificate_hash": "6527898261e57d28fda5e771c7210335016467b7"
+          }
+        },
+        {
+          "client_id": "818688231359-7dqcc60uc2vp9os4ofmukb3e5eetg1uq.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDkSBYmI7ZSRTau_1A0Dp2d2GYYm2C_svI"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "818688231359-7dqcc60uc2vp9os4ofmukb3e5eetg1uq.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
