@@ -4,6 +4,7 @@ import android.app.Activity
 import android.content.Context
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
+import android.util.Log
 import androidx.credentials.CredentialManager
 import androidx.credentials.GetCredentialRequest
 import androidx.credentials.exceptions.GetCredentialCancellationException
@@ -12,14 +13,20 @@ import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
 import com.google.firebase.Timestamp
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.GoogleAuthProvider
+import com.google.firebase.firestore.DocumentSnapshot
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.ListenerRegistration
+import com.google.firebase.firestore.MetadataChanges
+import com.google.firebase.firestore.QuerySnapshot
 import com.google.firebase.firestore.SetOptions
+import com.google.firebase.firestore.SnapshotMetadata
 import com.google.firebase.functions.FirebaseFunctions
 import com.google.firebase.functions.FirebaseFunctionsException
 import com.grittech.pathfit.R
+import com.grittech.pathfit.domain.DishSearch
 import com.grittech.pathfit.domain.LocalCatalog
+import com.grittech.pathfit.domain.PlaceResolver
 import com.grittech.pathfit.domain.asStringKeyMap
 import com.grittech.pathfit.domain.fitBool
 import com.grittech.pathfit.domain.fitInt
@@ -52,10 +59,15 @@ sealed interface Outcome<out T> {
 class FitPathRepository(context: Context) {
     private val appContext = context.applicationContext
     private val auth: FirebaseAuth = FirebaseAuth.getInstance()
-    private val functions: FirebaseFunctions = FirebaseFunctions.getInstance("asia-south1")
+    private val functionsRegion = "asia-south1"
+    private val functions: FirebaseFunctions = FirebaseFunctions.getInstance(functionsRegion)
     private val db: FirebaseFirestore = FirebaseFirestore.getInstance()
     val drafts = DraftStore(appContext)
     val session = SessionPrefs(appContext)
+
+    init {
+        Log.d(TAG, "Firebase init: functionsRegion=$functionsRegion firestoreDefault=true online=${isOnline()}")
+    }
 
     fun currentUid(): String? = auth.currentUser?.uid
     fun currentDisplayName(): String? = auth.currentUser?.displayName
@@ -99,12 +111,15 @@ class FitPathRepository(context: Context) {
     }
 
     suspend fun bootstrap(): Outcome<BootstrapResult> = try {
+        logRegionContext("bootstrap")
         val data = call("userBootstrap", emptyMap(), 40)
+        Log.d(TAG, "userBootstrap raw=$data")
         Outcome.Ok(parseBootstrap(data))
     } catch (error: Exception) {
         if (error.fitMessage().contains("ENTITLEMENT_INITIALIZING", ignoreCase = true)) {
             try {
                 val retry = call("userBootstrap", emptyMap(), 40)
+                Log.d(TAG, "userBootstrap retry raw=$retry")
                 Outcome.Ok(parseBootstrap(retry))
             } catch (again: Exception) {
                 Outcome.Err(again.fitMessage())
@@ -150,81 +165,125 @@ class FitPathRepository(context: Context) {
 
     fun listenTargets(uid: String, onUpdate: (Targets?) -> Unit): ListenerRegistration =
         db.collection("users").document(uid).collection("profile").document("targets")
-            .addSnapshotListener { snapshot, _ ->
+            .addSnapshotListener(MetadataChanges.INCLUDE) { snapshot, error ->
+                logSnapshot("targets", snapshot, error)
                 val data = snapshot?.data?.mapValues { it.value } ?: run {
                     onUpdate(null)
                     return@addSnapshotListener
                 }
+                Log.d(TAG, "targets data=$data")
                 onUpdate(parseTargets(data))
             }
 
     fun listenInsights(uid: String, onTip: (String?) -> Unit): ListenerRegistration =
         db.collection("users").document(uid).collection("profile").document("insights")
-            .addSnapshotListener { snapshot, _ ->
+            .addSnapshotListener(MetadataChanges.INCLUDE) { snapshot, error ->
+                logSnapshot("insights", snapshot, error)
+                Log.d(TAG, "insights data=${snapshot?.data}")
                 onTip(parseCoachTip(snapshot?.data))
             }
 
     fun listenUsuals(uid: String, onUpdate: (List<UsualMeal>) -> Unit): ListenerRegistration =
         db.collection("users").document(uid).collection("usualMeals")
-            .addSnapshotListener { snapshot, _ ->
+            .addSnapshotListener(MetadataChanges.INCLUDE) { snapshot, error ->
+                logQuerySnapshot("usualMeals", snapshot, error)
                 val meals = snapshot?.documents?.mapNotNull { doc ->
+                    Log.d(TAG, "usualMeal id=${doc.id} data=${doc.data}")
                     parseUsual(doc.id, doc.data ?: return@mapNotNull null)
                 }.orEmpty()
+                Log.d(TAG, "usualMeals count=${meals.size}")
                 onUpdate(meals)
             }
 
     fun listenLogs(uid: String, dayKey: String, onUpdate: (List<MealLog>) -> Unit): ListenerRegistration =
         db.collection("users").document(uid).collection("mealLogs")
             .whereEqualTo("dayKey", dayKey)
-            .addSnapshotListener { snapshot, _ ->
+            .addSnapshotListener(MetadataChanges.INCLUDE) { snapshot, error ->
+                logQuerySnapshot("mealLogs dayKey=$dayKey", snapshot, error)
                 val logs = snapshot?.documents?.mapNotNull { doc ->
+                    Log.d(TAG, "mealLog id=${doc.id} data=${doc.data}")
                     parseLog(doc.id, doc.data ?: return@mapNotNull null)
                 }.orEmpty()
+                Log.d(TAG, "mealLogs count=${logs.size}")
                 onUpdate(logs)
             }
 
     fun listenDrinks(uid: String, dayKey: String, onMl: (Int) -> Unit): ListenerRegistration =
         db.collection("users").document(uid).collection("drinkLogs")
             .whereEqualTo("dayKey", dayKey)
-            .addSnapshotListener { snapshot, _ ->
+            .addSnapshotListener(MetadataChanges.INCLUDE) { snapshot, error ->
+                logQuerySnapshot("drinkLogs dayKey=$dayKey", snapshot, error)
                 val ml = snapshot?.documents?.sumOf { doc ->
+                    Log.d(TAG, "drinkLog id=${doc.id} data=${doc.data}")
                     val data = doc.data ?: return@sumOf 0
                     val deleted = data["deletedAt"] != null
                     val type = data["type"] as? String
                     if (deleted || type != "water") 0 else (data["amountMl"] as? Number)?.toInt() ?: 0
                 } ?: 0
+                Log.d(TAG, "drinkLogs waterMl=$ml")
                 onMl(ml)
             }
 
-    suspend fun suggestAll(): Outcome<Map<String, List<CommonCard>>> = try {
-        val response = call("commonMealsSuggestAll", mapOf("limit" to 6), 60)
-        val bySlot = response.fitMap("bySlot")
-        val parsed = listOf("breakfast", "lunch", "dinner", "snack").associateWith { slot ->
-            val slotMap = bySlot.fitMap(slot)
-            parseCards(slotMap["cards"], slot)
-        }
-        if (parsed.values.all { it.isEmpty() }) Outcome.Ok(LocalCatalog.staples())
-        else Outcome.Ok(parsed)
-    } catch (_: Exception) {
-        try {
-            val slots = listOf("breakfast", "lunch", "dinner", "snack")
-            val combined = slots.associateWith { slot ->
-                val response = call("commonMealsSuggest", mapOf("mealSlot" to slot, "limit" to 4), 40)
-                parseCards(response["cards"], slot)
+    suspend fun suggestAll(): Outcome<Map<String, List<CommonCard>>> {
+        logRegionContext("suggestAll")
+        return try {
+            val response = call("commonMealsSuggestAll", mapOf("limit" to 10), 60)
+            Log.d(TAG, "commonMealsSuggestAll raw=$response")
+            val bySlot = response.fitMap("bySlot")
+            val parsed = listOf("breakfast", "lunch", "dinner", "snack").associateWith { slot ->
+                val slotMap = bySlot.fitMap(slot)
+                parseCards(slotMap["cards"], slot)
             }
-            if (combined.values.all { it.isEmpty() }) Outcome.Ok(LocalCatalog.staples())
-            else Outcome.Ok(combined)
-        } catch (error: Exception) {
-            Outcome.Ok(LocalCatalog.staples())
+            logMealDishCounts("suggestAll/remote", parsed)
+            if (parsed.values.all { it.isEmpty() }) {
+                val local = LocalCatalog.staples()
+                logMealDishCounts("suggestAll/fallback-local-empty-remote", local)
+                Outcome.Ok(local)
+            } else {
+                Outcome.Ok(parsed)
+            }
+        } catch (primary: Exception) {
+            Log.w(TAG, "commonMealsSuggestAll failed: ${primary.fitMessage()}")
+            try {
+                val slots = listOf("breakfast", "lunch", "dinner", "snack")
+                val combined = slots.associateWith { slot ->
+                    val response = call("commonMealsSuggest", mapOf("mealSlot" to slot, "limit" to 10), 40)
+                    Log.d(TAG, "commonMealsSuggest slot=$slot raw=$response")
+                    parseCards(response["cards"], slot)
+                }
+                logMealDishCounts("suggestAll/per-slot-fallback", combined)
+                if (combined.values.all { it.isEmpty() }) {
+                    val local = LocalCatalog.staples()
+                    logMealDishCounts("suggestAll/fallback-local-empty-slots", local)
+                    Outcome.Ok(local)
+                } else {
+                    Outcome.Ok(combined)
+                }
+            } catch (error: Exception) {
+                Log.w(TAG, "commonMealsSuggest fallback failed: ${error.fitMessage()}")
+                val local = LocalCatalog.staples()
+                logMealDishCounts("suggestAll/fallback-local-exception", local)
+                Outcome.Ok(local)
+            }
         }
     }
 
-    suspend fun suggestSlot(slot: String): Outcome<List<CommonCard>> = try {
-        val response = call("commonMealsSuggest", mapOf("mealSlot" to slot, "limit" to 4), 40)
-        val cards = parseCards(response["cards"], slot)
-        Outcome.Ok(cards.ifEmpty { LocalCatalog.staples()[slot].orEmpty() })
-    } catch (_: Exception) {
-        Outcome.Ok(LocalCatalog.staples()[slot].orEmpty())
+    suspend fun suggestSlot(slot: String): Outcome<List<CommonCard>> {
+        logRegionContext("suggestSlot/$slot")
+        return try {
+            val response = call("commonMealsSuggest", mapOf("mealSlot" to slot, "limit" to 10), 40)
+            Log.d(TAG, "commonMealsSuggest slot=$slot raw=$response")
+            val cards = parseCards(response["cards"], slot)
+            logMealDishCounts("suggestSlot/$slot/remote", mapOf(slot to cards))
+            val finalCards = cards.ifEmpty { LocalCatalog.staples()[slot].orEmpty() }
+            if (cards.isEmpty()) logMealDishCounts("suggestSlot/$slot/fallback-local", mapOf(slot to finalCards))
+            Outcome.Ok(finalCards)
+        } catch (error: Exception) {
+            Log.w(TAG, "commonMealsSuggest slot=$slot failed: ${error.fitMessage()}")
+            val local = LocalCatalog.staples()[slot].orEmpty()
+            logMealDishCounts("suggestSlot/$slot/fallback-local-exception", mapOf(slot to local))
+            Outcome.Ok(local)
+        }
     }
 
     suspend fun saveUsualFromCards(cards: List<CommonCard>): Outcome<Int> {
@@ -263,6 +322,8 @@ class FitPathRepository(context: Context) {
         val uid = currentUid() ?: return Outcome.Err("Sign in required")
         return try {
             val snap = db.collection("users").document(uid).collection("usualMeals").document(usualId).get().await()
+            logGetMetadata("usualMeals/$usualId", snap.metadata, if (snap.exists()) 1 else 0)
+            Log.d(TAG, "logUsual data=${snap.data}")
             val data = snap.data ?: return Outcome.Err("Usual not found")
             val usual = parseUsual(snap.id, data)
             writeLogs(uid, dayKey, usual.mealSlot, usual.name, usual.id, usual.items)
@@ -310,30 +371,49 @@ class FitPathRepository(context: Context) {
     }
 
     suspend fun searchDishes(query: String): List<DishHit> {
+        logRegionContext("dishSearch query='$query'")
         val local = filterDishes(LocalCatalog.dishes(), query)
         return try {
             val response = call("dishSearch", mapOf("query" to query, "limit" to 20), 40)
+            Log.d(TAG, "dishSearch raw=$response")
             val remote = parseDishes(response)
-            if (remote.isEmpty()) local else remote
-        } catch (_: Exception) {
+            Log.d(
+                TAG,
+                "dishSearch counts: remote=${remote.size} local=${local.size} names=${remote.map { it.nameEn }}",
+            )
+            remote.ifEmpty {
+                Log.d(TAG, "dishSearch using local fallback count=${local.size}")
+                local
+            }
+        } catch (error: Exception) {
+            Log.w(TAG, "dishSearch failed: ${error.fitMessage()}; using local count=${local.size}")
             local
         }
     }
 
     suspend fun searchIngredients(query: String, category: String): List<IngredientHit> {
         val remote = try {
-            db.collection("ingredients").limit(80).get().await().documents.mapNotNull { doc ->
+            val snap = db.collection("ingredients").limit(80).get().await()
+            logGetMetadata("ingredients", snap.metadata, snap.size())
+            snap.documents.forEach { doc -> Log.d(TAG, "ingredient id=${doc.id} data=${doc.data}") }
+            snap.documents.mapNotNull { doc ->
                 parseIngredient(doc.id, doc.data ?: return@mapNotNull null)
             }
-        } catch (_: Exception) {
+        } catch (error: Exception) {
+            Log.w(TAG, "ingredients get failed: ${error.fitMessage()}")
             emptyList()
         }
         val source = remote.ifEmpty { LocalCatalog.ingredients() }
-        return source.filter { hit ->
+        val filtered = source.filter { hit ->
             val categoryOk = category == "all" || hit.category == category
             val text = query.isBlank() || hit.nameEn.contains(query, true) || hit.detail.contains(query, true)
             categoryOk && text
         }
+        Log.d(
+            TAG,
+            "ingredients query='$query' category=$category remote=${remote.size} source=${source.size} showing=${filtered.size}",
+        )
+        return filtered
     }
 
     suspend fun saveRecipe(draft: RecipeDraft): Outcome<String> {
@@ -444,7 +524,10 @@ class FitPathRepository(context: Context) {
         val dishId = item.dishId
         if (dishId != null && item.kcalPerServing <= 0.0) {
             val remote = runCatching {
-                db.collection("dishes").document(dishId).get().await().data
+                val snap = db.collection("dishes").document(dishId).get().await()
+                logGetMetadata("dishes/$dishId", snap.metadata, if (snap.exists()) 1 else 0)
+                Log.d(TAG, "dish resolve id=$dishId data=${snap.data}")
+                snap.data
             }.getOrNull()
             if (remote != null) {
                 val nutrition = remote.fitMap("nutritionPerServing").ifEmpty { remote }
@@ -474,11 +557,74 @@ class FitPathRepository(context: Context) {
     private suspend fun call(name: String, body: Map<String, Any?>, timeoutSec: Long): Map<String, Any?> {
         val payload = HashMap<String, Any>()
         body.forEach { (key, value) -> if (value != null) payload[key] = value }
+        Log.d(TAG, "callable region=$functionsRegion name=$name payload=$payload")
         val result = functions.getHttpsCallable(name)
             .withTimeout(timeoutSec, TimeUnit.SECONDS)
             .call(payload)
             .await()
-        return result.getData().asStringKeyMap()
+        val data = result.getData().asStringKeyMap()
+        Log.d(TAG, "callable region=$functionsRegion name=$name responseKeys=${data.keys}")
+        return data
+    }
+
+    fun logRegionContext(reason: String) {
+        val uid = currentUid()
+        val draft = uid?.let { drafts.load(it) }
+        Log.d(
+            TAG,
+            "region context [$reason]: functionsRegion=$functionsRegion " +
+                "regionKey=${draft?.regionKey} countryCode=${draft?.countryCode} " +
+                "locationLabel=${draft?.locationLabel} uid=$uid online=${isOnline()}",
+        )
+    }
+
+    private fun logMealDishCounts(source: String, bySlot: Map<String, List<CommonCard>>) {
+        bySlot.forEach { (slot, cards) ->
+            val dishCount = cards.sumOf { it.items.size }
+            val dishNames = cards.flatMap { card -> card.items.map { "${card.nameEn}->${it.nameEn}" } }
+            Log.d(
+                TAG,
+                "meals/$slot [$source]: cards=${cards.size} dishes=$dishCount " +
+                    "cardNames=${cards.map { it.nameEn }} dishes=$dishNames",
+            )
+        }
+        val totalCards = bySlot.values.sumOf { it.size }
+        val totalDishes = bySlot.values.sumOf { cards -> cards.sumOf { it.items.size } }
+        Log.d(TAG, "meals/ALL [$source]: totalCards=$totalCards totalDishes=$totalDishes")
+    }
+
+    private fun logSnapshot(label: String, snapshot: DocumentSnapshot?, error: Exception?) {
+        if (error != null) {
+            Log.w(TAG, "$label listener error=${error.message}")
+            return
+        }
+        logMeta(label, snapshot?.metadata, exists = snapshot?.exists() == true, count = if (snapshot?.exists() == true) 1 else 0)
+    }
+
+    private fun logQuerySnapshot(label: String, snapshot: QuerySnapshot?, error: Exception?) {
+        if (error != null) {
+            Log.w(TAG, "$label listener error=${error.message}")
+            return
+        }
+        logMeta(label, snapshot?.metadata, exists = snapshot != null, count = snapshot?.size() ?: 0)
+    }
+
+    private fun logGetMetadata(label: String, metadata: SnapshotMetadata, count: Int) {
+        logMeta(label, metadata, exists = count > 0, count = count)
+    }
+
+    private fun logMeta(label: String, metadata: SnapshotMetadata?, exists: Boolean, count: Int) {
+        val fromCache = metadata?.isFromCache == true
+        val pendingWrites = metadata?.hasPendingWrites() == true
+        val source = when {
+            metadata == null -> "unknown"
+            fromCache -> "CACHE"
+            else -> "SERVER/REALTIME"
+        }
+        Log.d(
+            TAG,
+            "firestore [$label] source=$source fromCache=$fromCache pendingWrites=$pendingWrites exists=$exists count=$count",
+        )
     }
 
     private fun parseBootstrap(data: Map<String, Any?>): BootstrapResult {
@@ -490,12 +636,13 @@ class FitPathRepository(context: Context) {
         )
     }
 
-    private fun OnboardingDraft.toProfileMap(): Map<String, Any> = mapOf(
+    private fun OnboardingDraft.toProfileMap(): Map<String, Any?> = mapOf(
         "dateOfBirth" to dateOfBirth,
         "sexAtBirth" to sexAtBirth,
         "heightCm" to heightCm,
         "weightKg" to weightKg,
         "targetWeightKg" to targetWeightKg,
+        "weeklyPaceKg" to weeklyPaceKg,
         "activityLevel" to activityLevel,
         "goal" to goal,
         "conditionKeys" to conditionKeys,
@@ -503,7 +650,7 @@ class FitPathRepository(context: Context) {
         "dietTypes" to dietTypes,
         "timezone" to timezone,
         "countryCode" to countryCode,
-        "regionKey" to regionKey,
+        "regionKey" to PlaceResolver.migrateRegionKey(regionKey),
         "units" to mapOf("mass" to "kg", "height" to heightUnit),
         "schemaVersion" to 1,
         "updatedAt" to FieldValue.serverTimestamp(),
@@ -532,12 +679,6 @@ class FitPathRepository(context: Context) {
         "oilLevel" to if (addedFatKcal > 0) "normal" else null,
         "unit" to unit,
         "count" to defaultPortion,
-        "name" to nameEn,
-        "kcalPerServing" to if (defaultPortion == 0.0) estimateKcal.toDouble() else estimateKcal / defaultPortion,
-        "proteinPer" to proteinG,
-        "carbsPer" to carbsG,
-        "fatPer" to fatG,
-        "addedFatKcal" to addedFatKcal,
     ).filterValues { it != null }
 
     private fun plateToUsualMap(name: String, slot: String, items: List<PlateItem>): Map<String, Any?> = mapOf(
@@ -553,12 +694,6 @@ class FitPathRepository(context: Context) {
                 "oilLevel" to item.oilLevel,
                 "unit" to item.unit,
                 "count" to item.portion,
-                "name" to item.name,
-                "kcalPerServing" to item.kcalPerServing,
-                "proteinPer" to item.proteinPer,
-                "carbsPer" to item.carbsPer,
-                "fatPer" to item.fatPer,
-                "addedFatKcal" to item.addedFatKcal,
             ).filterValues { it != null }
         },
         "source" to "user",
@@ -576,6 +711,7 @@ class FitPathRepository(context: Context) {
         status = data.fitString("status") ?: "incomplete",
         blockReasons = data.fitStringList("blockReasons"),
         calorieTarget = data.fitInt("calorieTarget"),
+        rawCalorieTarget = data.fitInt("rawCalorieTarget"),
         floorApplied = data.fitBool("floorApplied"),
         adjustments = data.fitStringList("adjustments"),
         goalEffective = data.fitString("goalEffective"),
@@ -588,6 +724,7 @@ class FitPathRepository(context: Context) {
         fatPct = data.fitInt("fatPct"),
         bmr = data.fitNumber("bmr"),
         tdee = data.fitNumber("tdee"),
+        activityMultiplier = data.fitNumber("activityMultiplier"),
         goalDelta = data.fitNumber("goalDelta"),
         appliedGoalDelta = data.fitNumber("appliedGoalDelta"),
         weeklyPaceKg = data.fitNumber("weeklyPaceKg"),
@@ -705,8 +842,10 @@ class FitPathRepository(context: Context) {
                 fatG = nutrition.fitNumber("fatG") ?: 0.0,
                 addedFatKcal = map.fitNumber("addedFatKcalPerServing") ?: 0.0,
                 tags = map.fitStringList("tags"),
+                searchAliases = map.fitStringList("searchAliases"),
                 preps = map.fitStringList("preps"),
                 unit = map.fitString("unit") ?: "serving",
+                slug = map.fitString("dishSlug") ?: map.fitString("slug").orEmpty(),
             )
         }
     }
@@ -743,14 +882,11 @@ class FitPathRepository(context: Context) {
         return parsed.firstOrNull { "today_coach" in it.second }?.first ?: parsed.firstOrNull()?.first
     }
 
-    private fun filterDishes(dishes: List<DishHit>, query: String): List<DishHit> {
-        val q = query.trim().lowercase()
-        if (q.isBlank()) return dishes
-        return dishes.filter { dish ->
-            dish.nameEn.lowercase().contains(q) ||
-                dish.detail.lowercase().contains(q) ||
-                dish.tags.any { it.lowercase().contains(q) }
-        }
+    private fun filterDishes(dishes: List<DishHit>, query: String): List<DishHit> =
+        dishes.filter { DishSearch.matches(it, query) }
+
+    companion object {
+        private const val TAG = "FitPathFirebase"
     }
 }
 

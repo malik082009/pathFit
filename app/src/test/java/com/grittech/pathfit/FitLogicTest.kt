@@ -2,10 +2,15 @@ package com.grittech.pathfit
 
 import com.grittech.pathfit.domain.CalorieMath
 import com.grittech.pathfit.domain.DayClock
+import com.grittech.pathfit.domain.DishSearch
 import com.grittech.pathfit.domain.EnergyInput
+import com.grittech.pathfit.domain.LocalCatalog
+import com.grittech.pathfit.domain.PlaceResolver
 import com.grittech.pathfit.domain.PreviewLogic
 import com.grittech.pathfit.model.Targets
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -81,5 +86,26 @@ class FitLogicTest {
     fun headerLabelSurvivesBlankDayKey() {
         val label = DayClock.headerLabel("", "Asia/Karachi")
         assertTrue(label.startsWith("Today"))
+    }
+
+    @Test
+    fun placeResolverMapsPkAllowlist() {
+        assertEquals("pk-punjab", PlaceResolver.resolve("Lahore, Punjab").regionKey)
+        assertEquals("pk-islamabad", PlaceResolver.resolve("Islamabad").regionKey)
+        assertEquals("pk-islamabad", PlaceResolver.resolve("Rawalpindi").regionKey)
+        assertEquals("pk-sindh", PlaceResolver.resolve("Karachi").regionKey)
+        assertEquals("in-south", PlaceResolver.resolve("Chennai").regionKey)
+        assertEquals("pk-islamabad", PlaceResolver.migrateRegionKey("pk-ict"))
+        assertNull(PlaceResolver.resolve("Some unknown PK village", "PK").regionKey)
+    }
+
+    @Test
+    fun dishSearchAndaIsTokenPrefixNotSubstring() {
+        val dishes = LocalCatalog.dishes()
+        val hits = dishes.filter { DishSearch.matches(it, "anda") }
+        assertTrue(hits.any { it.nameEn.contains("Boiled", ignoreCase = true) })
+        assertTrue(hits.any { it.nameEn.contains("Omelette", ignoreCase = true) || it.searchAliases.contains("omelette") })
+        assertTrue(hits.any { it.nameEn.contains("Anda", ignoreCase = true) })
+        assertFalse(hits.any { it.nameEn.contains("Pasanday", ignoreCase = true) })
     }
 }

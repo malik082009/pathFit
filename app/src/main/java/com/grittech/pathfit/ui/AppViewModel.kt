@@ -1,13 +1,16 @@
 package com.grittech.pathfit.ui
 
 import android.app.Application
+import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.google.firebase.firestore.ListenerRegistration
 import com.grittech.pathfit.data.FitPathRepository
 import com.grittech.pathfit.data.Outcome
 import com.grittech.pathfit.domain.DayClock
+import com.grittech.pathfit.domain.DishSearch
 import com.grittech.pathfit.domain.PaceLogic
+import com.grittech.pathfit.domain.PlaceResolver
 import com.grittech.pathfit.model.CommonCard
 import com.grittech.pathfit.model.CustomMealDraft
 import com.grittech.pathfit.model.DishHit
@@ -22,6 +25,8 @@ import com.grittech.pathfit.model.RecipeLine
 import com.grittech.pathfit.model.Targets
 import com.grittech.pathfit.model.UsualItem
 import com.grittech.pathfit.model.UsualMeal
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asSharedFlow
@@ -106,6 +111,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private var logsReg: ListenerRegistration? = null
     private var drinksReg: ListenerRegistration? = null
     private var boundDay: String? = null
+    private var dishSearchJob: Job? = null
 
     init {
         repo.currentUid()?.let { attach(it, navigate = false) }
@@ -247,10 +253,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun loadStaples() {
         viewModelScope.launch {
             _state.update { it.copy(busy = true, error = null) }
+            repo.logRegionContext("loadStaples")
             when (val result = repo.suggestAll()) {
                 is Outcome.Err -> _state.update { it.copy(busy = false, error = result.message) }
                 is Outcome.Ok -> {
                     val offline = result.value.values.any { cards -> cards.any { it.source == "offline" } }
+                    logStaplesGotVsShown("staplesScreen", result.value, showingLimit = null)
                     _state.update { it.copy(busy = false, staples = result.value, staplesOffline = offline || !repo.isOnline()) }
                 }
             }
@@ -313,13 +321,26 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun searchDishes(query: String, tag: String? = _state.value.dishTag) {
         _state.update { it.copy(dishQuery = query, dishTag = tag) }
-        viewModelScope.launch {
-            val hits = repo.searchDishes(tag ?: query)
-            val filtered = if (tag != null && query.isNotBlank()) {
-                hits.filter { dish ->
-                    dish.nameEn.contains(query, true) || dish.tags.any { it.contains(query, true) || it.contains(tag, true) }
-                }
-            } else hits
+        dishSearchJob?.cancel()
+        dishSearchJob = viewModelScope.launch {
+            // Wait while the user is still typing; empty query / tag-only runs immediately.
+            if (query.isNotBlank()) delay(DISH_SEARCH_DEBOUNCE_MS)
+            val searchText = when {
+                tag != null && query.isNotBlank() -> query
+                tag != null -> tag
+                else -> query
+            }
+            val hits = repo.searchDishes(searchText)
+            val filtered = when {
+                tag != null && query.isNotBlank() ->
+                    hits.filter { DishSearch.matches(it, query) && DishSearch.matches(it, tag) }
+                else -> hits
+            }
+            Log.d(
+                TAG,
+                "dishes got=${hits.size} showing=${filtered.size} query='$query' tag=$tag " +
+                    "gotNames=${hits.map { it.nameEn }} shownNames=${filtered.map { it.nameEn }}",
+            )
             _state.update {
                 it.copy(
                     dishes = filtered,
@@ -370,7 +391,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 is Outcome.Ok -> {
                     val note = if (logToday) "Saved and logged" else "Saved to Your Usuals"
                     _state.update { it.copy(busy = false, snackbar = logMessage(note)) }
-                    go(Routes.Home, clear = true)
+                    // Prefer Don't Log on first Meal Setup — return to staples hub; Log → Today
+                    if (logToday) {
+                        repo.session.forceOnboarding = false
+                        go(Routes.Home, clear = true)
+                    } else {
+                        go(Routes.Staples)
+                    }
                 }
             }
         }
@@ -563,11 +590,16 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun ensureSlotSuggestions() {
         val slot = _state.value.selectedSlot
-        if (_state.value.staples[slot].orEmpty().isNotEmpty()) return
+        if (_state.value.staples[slot].orEmpty().isNotEmpty()) {
+            logStaplesGotVsShown("home/$slot/cached", _state.value.staples, showingLimit = 4)
+            return
+        }
         viewModelScope.launch {
             when (val result = repo.suggestSlot(slot)) {
-                is Outcome.Ok -> _state.update { state ->
-                    state.copy(staples = state.staples + (slot to result.value))
+                is Outcome.Ok -> {
+                    val next = _state.value.staples + (slot to result.value)
+                    logStaplesGotVsShown("home/$slot", next, showingLimit = 4)
+                    _state.update { state -> state.copy(staples = next) }
                 }
                 is Outcome.Err -> _state.update { it.copy(error = result.message) }
             }
@@ -589,8 +621,18 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val deviceTz = TimeZone.getDefault().id.ifBlank { "Asia/Karachi" }
         val base = existing ?: OnboardingDraft(timezone = deviceTz)
         val name = base.displayName.ifBlank { repo.currentDisplayName().orEmpty() }
-        val draft = base.copy(displayName = name, timezone = base.timezone.ifBlank { deviceTz })
+        val draft = base.copy(
+            displayName = name,
+            timezone = base.timezone.ifBlank { deviceTz },
+            regionKey = PlaceResolver.migrateRegionKey(base.regionKey),
+        )
         val day = DayClock.todayKey(draft.timezone)
+        repo.logRegionContext("attach")
+        Log.d(
+            TAG,
+            "attach uid=$uid regionKey=${draft.regionKey} countryCode=${draft.countryCode} " +
+                "locationLabel=${draft.locationLabel} dayKey=$day",
+        )
         _state.update {
             it.copy(
                 draft = draft,
@@ -608,6 +650,36 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         usualsReg = repo.listenUsuals(uid) { meals -> _state.update { it.copy(usuals = meals) } }
         bindDay(uid, _state.value.dayKey.ifBlank { day })
         if (navigate) Unit
+    }
+
+    private fun logStaplesGotVsShown(
+        surface: String,
+        bySlot: Map<String, List<CommonCard>>,
+        showingLimit: Int?,
+    ) {
+        bySlot.forEach { (slot, cards) ->
+            val dishesGot = cards.sumOf { it.items.size }
+            val shownCards = if (showingLimit == null) cards else cards.take(showingLimit)
+            val dishesShown = shownCards.sumOf { it.items.size }
+            Log.d(
+                TAG,
+                "staples [$surface]/$slot gotCards=${cards.size} shownCards=${shownCards.size} " +
+                    "gotDishes=$dishesGot shownDishes=$dishesShown " +
+                    "got=${cards.map { c -> "${c.nameEn}(${c.items.map { it.nameEn }})" }} " +
+                    "shown=${shownCards.map { c -> "${c.nameEn}(${c.items.map { it.nameEn }})" }}",
+            )
+        }
+        val allCards = bySlot.values.flatten()
+        val allShown = if (showingLimit == null) {
+            allCards
+        } else {
+            bySlot.values.flatMap { it.take(showingLimit) }
+        }
+        Log.d(
+            TAG,
+            "staples [$surface]/ALL gotCards=${allCards.size} shownCards=${allShown.size} " +
+                "gotDishes=${allCards.sumOf { it.items.size }} shownDishes=${allShown.sumOf { it.items.size }}",
+        )
     }
 
     private fun bindDay(uid: String, day: String) {
@@ -699,6 +771,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     override fun onCleared() {
         clearListeners()
         super.onCleared()
+    }
+
+    companion object {
+        private const val TAG = "FitPathFirebase"
+        private const val DISH_SEARCH_DEBOUNCE_MS = 400L
     }
 }
 

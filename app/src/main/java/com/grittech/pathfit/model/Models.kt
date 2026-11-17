@@ -4,7 +4,7 @@ data class OnboardingDraft(
     val onboardingStep: String = "about_you",
     val displayName: String = "",
     val countryCode: String = "PK",
-    val regionKey: String = "pk-punjab",
+    val regionKey: String? = "pk-punjab",
     val locationLabel: String = "Lahore, Punjab",
     val dateOfBirth: String = "1998-05-14",
     val sexAtBirth: String = "male",
@@ -25,13 +25,14 @@ data class OnboardingDraft(
 data class RegionOption(
     val label: String,
     val countryCode: String,
-    val regionKey: String,
+    val regionKey: String?,
 )
 
 data class Targets(
     val status: String = "incomplete",
     val blockReasons: List<String> = emptyList(),
     val calorieTarget: Int? = null,
+    val rawCalorieTarget: Int? = null,
     val floorApplied: Boolean = false,
     val adjustments: List<String> = emptyList(),
     val goalEffective: String? = null,
@@ -44,6 +45,7 @@ data class Targets(
     val fatPct: Int? = null,
     val bmr: Double? = null,
     val tdee: Double? = null,
+    val activityMultiplier: Double? = null,
     val goalDelta: Double? = null,
     val appliedGoalDelta: Double? = null,
     val weeklyPaceKg: Double? = null,
@@ -108,8 +110,10 @@ data class DishHit(
     val fatG: Double,
     val addedFatKcal: Double = 0.0,
     val tags: List<String> = emptyList(),
+    val searchAliases: List<String> = emptyList(),
     val preps: List<String> = emptyList(),
     val unit: String = "serving",
+    val slug: String = "",
 )
 
 data class IngredientHit(

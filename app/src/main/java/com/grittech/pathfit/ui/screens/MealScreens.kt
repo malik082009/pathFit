@@ -607,9 +607,9 @@ fun DishPickerScreen(onBack: () -> Unit) {
         }
         Spacer(Modifier.height(12.dp))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            CaptureTile(Icons.Filled.QrCodeScanner, "Barcode", "Packaged", Modifier.weight(1f))
-            CaptureTile(Icons.Filled.PhotoCamera, "AI Snap", "Visual Scan", Modifier.weight(1f))
-            CaptureTile(Icons.Filled.Mic, "Voice Log", "Dictation", Modifier.weight(1f))
+            CaptureTile(Icons.Filled.QrCodeScanner, "Barcode", "Coming soon", Modifier.weight(1f), enabled = false)
+            CaptureTile(Icons.Filled.PhotoCamera, "AI Snap", "Coming soon", Modifier.weight(1f), enabled = false)
+            CaptureTile(Icons.Filled.Mic, "Voice Log", "Coming soon", Modifier.weight(1f), enabled = false)
         }
         Spacer(Modifier.height(14.dp))
 
@@ -1215,17 +1215,25 @@ private fun MacroBox(label: String, value: String, color: Color, modifier: Modif
 }
 
 @Composable
-private fun CaptureTile(icon: ImageVector, title: String, caption: String, modifier: Modifier) {
+private fun CaptureTile(
+    icon: ImageVector,
+    title: String,
+    caption: String,
+    modifier: Modifier,
+    enabled: Boolean = true,
+) {
+    val tint = if (enabled) Mint else InkMuted.copy(alpha = 0.55f)
+    val titleColor = if (enabled) Ink else InkMuted.copy(alpha = 0.7f)
     Column(
         modifier
             .clip(RoundedCornerShape(14.dp))
-            .background(CardRest)
+            .background(CardRest.copy(alpha = if (enabled) 1f else 0.55f))
             .border(1.dp, Line, RoundedCornerShape(14.dp))
             .padding(10.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Icon(icon, contentDescription = null, tint = Mint, modifier = Modifier.size(20.dp))
-        Text(title, color = Ink, fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
+        Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(20.dp))
+        Text(title, color = titleColor, fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
         Text(caption, color = InkMuted, fontSize = 10.sp)
     }
 }

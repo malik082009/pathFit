@@ -18,21 +18,119 @@ import java.util.TimeZone
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
-object Regions {
+/**
+ * Place → countryCode / regionKey resolver (Maps/Places geocode handoff).
+ * PK keys must match Common meals seeds — never invent; never write `pk-ict`.
+ */
+object PlaceResolver {
     val options = listOf(
         RegionOption("Lahore, Punjab", "PK", "pk-punjab"),
-        RegionOption("Karachi, Sindh", "PK", "pk-sindh"),
-        RegionOption("Islamabad", "PK", "pk-ict"),
-        RegionOption("Rawalpindi, Punjab", "PK", "pk-punjab"),
         RegionOption("Faisalabad, Punjab", "PK", "pk-punjab"),
         RegionOption("Multan, Punjab", "PK", "pk-punjab"),
+        RegionOption("Karachi, Sindh", "PK", "pk-sindh"),
+        RegionOption("Hyderabad, Sindh", "PK", "pk-sindh"),
+        RegionOption("Islamabad", "PK", "pk-islamabad"),
+        RegionOption("Rawalpindi", "PK", "pk-islamabad"),
         RegionOption("Peshawar, Khyber Pakhtunkhwa", "PK", "pk-kpk"),
+        RegionOption("Abbottabad, Khyber Pakhtunkhwa", "PK", "pk-kpk"),
         RegionOption("Quetta, Balochistan", "PK", "pk-balochistan"),
+        RegionOption("Gwadar, Balochistan", "PK", "pk-balochistan"),
+        RegionOption("Chennai, Tamil Nadu", "IN", "in-south"),
         RegionOption("Delhi, India", "IN", "in-delhi"),
         RegionOption("Mumbai, Maharashtra", "IN", "in-maharashtra"),
         RegionOption("Dhaka, Bangladesh", "BD", "bd-dhaka"),
         RegionOption("London, United Kingdom", "GB", "gb-london"),
     )
+
+    fun migrateRegionKey(key: String?): String? = when (key?.trim()?.lowercase()) {
+        null, "" -> null
+        "pk-ict" -> "pk-islamabad"
+        else -> key
+    }
+
+    fun search(query: String): List<RegionOption> {
+        val q = query.trim().lowercase()
+        if (q.isBlank()) return options
+        return options.filter { it.label.lowercase().contains(q) || matchesAdmin(q, it) }
+    }
+
+    /** Resolve a Places/geocode label or free-text place into FitPath country + region. */
+    fun resolve(placeLabel: String, countryHint: String? = null): RegionOption {
+        val raw = placeLabel.trim()
+        val lower = raw.lowercase()
+        val exact = options.firstOrNull { it.label.equals(raw, ignoreCase = true) }
+        if (exact != null) return exact
+
+        val country = (countryHint ?: inferCountry(lower) ?: "PK").uppercase()
+        val regionKey = when (country) {
+            "PK" -> resolvePk(lower)
+            "IN" -> resolveIn(lower)
+            "BD" -> if (lower.contains("dhaka")) "bd-dhaka" else null
+            "GB" -> if (lower.contains("london")) "gb-london" else null
+            else -> null
+        }
+        val label = raw.ifBlank {
+            options.firstOrNull { it.countryCode == country && it.regionKey == regionKey }?.label
+                ?: country
+        }
+        return RegionOption(label = label, countryCode = country, regionKey = regionKey)
+    }
+
+    private fun matchesAdmin(q: String, option: RegionOption): Boolean {
+        val tokens = option.label.lowercase().split(',', ' ', '-').filter { it.length > 2 }
+        return tokens.any { it.startsWith(q) || q.startsWith(it) }
+    }
+
+    private fun inferCountry(lower: String): String? = when {
+        listOf("pakistan", "lahore", "karachi", "islamabad", "rawalpindi", "peshawar",
+            "quetta", "multan", "faisalabad", "hyderabad", "abbottabad", "gwadar",
+            "punjab", "sindh", "balochistan", "kpk", "khyber").any { it in lower } -> "PK"
+        listOf("india", "chennai", "delhi", "mumbai", "tamil", "maharashtra").any { it in lower } -> "IN"
+        listOf("bangladesh", "dhaka").any { it in lower } -> "BD"
+        listOf("london", "united kingdom", "uk").any { it in lower } -> "GB"
+        else -> null
+    }
+
+    private fun resolvePk(lower: String): String? = when {
+        listOf("lahore", "faisalabad", "multan", "punjab").any { it in lower } &&
+            !listOf("rawalpindi", "islamabad").any { it in lower } -> "pk-punjab"
+        listOf("karachi", "hyderabad", "sindh").any { it in lower } -> "pk-sindh"
+        listOf("islamabad", "rawalpindi", "ict", "islamabad capital territory").any { it in lower } ->
+            "pk-islamabad"
+        listOf("peshawar", "abbottabad", "kpk", "khyber", "pakhtunkhwa").any { it in lower } -> "pk-kpk"
+        listOf("quetta", "gwadar", "balochistan").any { it in lower } -> "pk-balochistan"
+        else -> null
+    }
+
+    private fun resolveIn(lower: String): String? = when {
+        listOf("chennai", "tamil", "south").any { it in lower } -> "in-south"
+        listOf("delhi").any { it in lower } -> "in-delhi"
+        listOf("mumbai", "maharashtra").any { it in lower } -> "in-maharashtra"
+        else -> null
+    }
+}
+
+@Deprecated("Use PlaceResolver", ReplaceWith("PlaceResolver"))
+object Regions {
+    val options get() = PlaceResolver.options
+}
+
+object DishSearch {
+    /** Token / word-prefix match — not mid-word substring (anda ≠ Pasanday / Hollandaise). */
+    fun matches(dish: DishHit, query: String): Boolean {
+        val q = query.trim().lowercase()
+        if (q.isBlank()) return true
+        val needles = listOf(dish.nameEn, dish.slug, dish.detail) + dish.tags + dish.searchAliases
+        return q.split(Regex("\\s+")).all { token ->
+            needles.any { field -> tokenPrefixHit(field, token) }
+        }
+    }
+
+    fun tokenPrefixHit(field: String, token: String): Boolean {
+        if (token.isBlank()) return true
+        val words = field.lowercase().split(Regex("[^a-z0-9]+")).filter { it.isNotEmpty() }
+        return words.any { it.startsWith(token) }
+    }
 }
 
 object DayClock {
@@ -494,17 +592,72 @@ object LocalCatalog {
     )
 
     fun dishes(): List<DishHit> = listOf(
-        DishHit("dish-farm-egg", "Farm Fresh Eggs", "Desi / farm anda", 155.0, 13.0, 1.0, 10.0, tags = listOf("anda", "egg"), preps = listOf("Boiled (Hard)", "Desi Omelette", "Half Fry", "Poached"), unit = "piece"),
-        DishHit("dish-egg-white", "Desi Murgh Egg White", "Boiled • high protein", 17.0, 3.6, 0.2, 0.1, tags = listOf("anda", "egg", "boiled"), unit = "piece"),
-        DishHit("dish-cheese-omelette", "Cheese Mushroom Omelette", "1 serving", 240.0, 16.0, 4.0, 16.0, 40.0, tags = listOf("anda", "omelette", "egg"), preps = listOf("Desi Omelette")),
-        DishHit("dish-shami-kabab", "Classic Shami Kabab", "Lean beef & lentil", 160.0, 12.0, 6.0, 9.0, 30.0, tags = listOf("kabab")),
-        DishHit("dish-roti", "Wholewheat Roti", "Tawa", 150.0, 4.0, 28.0, 2.0, 20.0, tags = listOf("roti")),
-        DishHit("dish-aloo-paratha", "Aloo Paratha", "Tawa pan baked", 320.0, 8.0, 42.0, 12.0, 90.0, tags = listOf("paratha")),
-        DishHit("dish-plain-paratha", "Wholewheat Paratha", "Tawa pan baked", 280.0, 6.0, 36.0, 12.0, 80.0, tags = listOf("paratha")),
-        DishHit("dish-elaichi-chai", "Elaichi Chai", "Standard brewed cup", 65.0, 2.0, 8.0, 2.0, tags = listOf("chai")),
-        DishHit("dish-daal-masoor", "Daal Masoor", "1 katori", 220.0, 14.0, 32.0, 6.0, 40.0, tags = listOf("daal")),
-        DishHit("dish-chicken-karahi", "Chicken Karahi", "Home style", 420.0, 32.0, 8.0, 24.0, 120.0, tags = listOf("chicken")),
-        DishHit("dish-mixed-sabzi", "Mixed Sabzi", "Seasonal", 160.0, 4.0, 16.0, 8.0, 50.0, tags = listOf("sabzi")),
+        DishHit(
+            "dish-boiled-egg", "Boiled eggs (plain)", "Farm anda • hard boiled", 105.0, 13.0, 1.0, 10.0,
+            tags = listOf("anda", "egg", "boiled"), searchAliases = listOf("anda", "egg", "boiled"),
+            preps = listOf("Boiled (Hard)"), unit = "piece", slug = "boiled-eggs-plain",
+        ),
+        DishHit(
+            "dish-masala-egg", "Masala boiled eggs", "Chaar masala anda", 90.0, 12.0, 2.0, 8.0,
+            tags = listOf("anda", "egg", "boiled", "masala"), searchAliases = listOf("anda", "egg", "boiled", "masala"),
+            unit = "piece", slug = "masala-boiled-eggs",
+        ),
+        DishHit(
+            "dish-farm-egg", "Farm Fresh Eggs", "Desi / farm anda", 155.0, 13.0, 1.0, 10.0,
+            tags = listOf("anda", "egg"), searchAliases = listOf("anda", "egg"),
+            preps = listOf("Boiled (Hard)", "Desi Omelette", "Half Fry", "Poached"), unit = "piece", slug = "farm-fresh-eggs",
+        ),
+        DishHit(
+            "dish-egg-white", "Desi Murgh Egg White", "Boiled • high protein", 17.0, 3.6, 0.2, 0.1,
+            tags = listOf("anda", "egg", "boiled"), searchAliases = listOf("anda", "egg", "boiled"),
+            unit = "piece", slug = "desi-murgh-egg-white",
+        ),
+        DishHit(
+            "dish-cheese-omelette", "Cheese Mushroom Omelette", "1 serving", 240.0, 16.0, 4.0, 16.0, 40.0,
+            tags = listOf("anda", "omelette", "egg"), searchAliases = listOf("anda", "egg", "omelette"),
+            preps = listOf("Desi Omelette"), slug = "cheese-mushroom-omelette",
+        ),
+        DishHit(
+            "dish-anda-ghotala", "Anda ghotala", "Scrambled spicy eggs", 260.0, 16.0, 4.0, 18.0, 50.0,
+            tags = listOf("anda", "egg"), searchAliases = listOf("anda", "egg"),
+            unit = "serving", slug = "anda-ghotala",
+        ),
+        DishHit(
+            "dish-shami-kabab", "Classic Shami Kabab", "Lean beef & lentil", 160.0, 12.0, 6.0, 9.0, 30.0,
+            tags = listOf("kabab"), unit = "piece", slug = "classic-shami-kabab",
+        ),
+        DishHit(
+            "dish-chicken-pasanday", "Chicken Pasanday", "Rich gravy", 380.0, 28.0, 6.0, 26.0, 100.0,
+            tags = listOf("chicken"), unit = "serving", slug = "chicken-pasanday",
+        ),
+        DishHit(
+            "dish-roti", "Wholewheat Roti", "Tawa", 150.0, 4.0, 28.0, 2.0, 20.0,
+            tags = listOf("roti"), unit = "piece", slug = "wholewheat-roti",
+        ),
+        DishHit(
+            "dish-aloo-paratha", "Aloo Paratha", "Tawa pan baked", 320.0, 8.0, 42.0, 12.0, 90.0,
+            tags = listOf("paratha"), unit = "piece", slug = "aloo-paratha",
+        ),
+        DishHit(
+            "dish-plain-paratha", "Wholewheat Paratha", "Tawa pan baked", 280.0, 6.0, 36.0, 12.0, 80.0,
+            tags = listOf("paratha"), unit = "piece", slug = "wholewheat-paratha",
+        ),
+        DishHit(
+            "dish-elaichi-chai", "Elaichi Chai", "Standard brewed cup", 65.0, 2.0, 8.0, 2.0,
+            tags = listOf("chai"), unit = "cup", slug = "elaichi-chai",
+        ),
+        DishHit(
+            "dish-daal-masoor", "Daal Masoor", "1 katori", 220.0, 14.0, 32.0, 6.0, 40.0,
+            tags = listOf("daal"), unit = "katori", slug = "daal-masoor",
+        ),
+        DishHit(
+            "dish-chicken-karahi", "Chicken Karahi", "Home style", 420.0, 32.0, 8.0, 24.0, 120.0,
+            tags = listOf("chicken"), unit = "serving", slug = "chicken-karahi",
+        ),
+        DishHit(
+            "dish-mixed-sabzi", "Mixed Sabzi", "Seasonal", 160.0, 4.0, 16.0, 8.0, 50.0,
+            tags = listOf("sabzi"), unit = "katori", slug = "mixed-sabzi",
+        ),
     )
 
     fun ingredients(): List<IngredientHit> = listOf(

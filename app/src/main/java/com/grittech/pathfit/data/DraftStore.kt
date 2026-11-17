@@ -1,6 +1,7 @@
 package com.grittech.pathfit.data
 
 import android.content.Context
+import com.grittech.pathfit.domain.PlaceResolver
 import com.grittech.pathfit.model.OnboardingDraft
 import org.json.JSONArray
 import org.json.JSONObject
@@ -23,7 +24,7 @@ class DraftStore(context: Context) {
         put("onboardingStep", draft.onboardingStep)
         put("displayName", draft.displayName)
         put("countryCode", draft.countryCode)
-        put("regionKey", draft.regionKey)
+        if (draft.regionKey == null) put("regionKey", JSONObject.NULL) else put("regionKey", draft.regionKey)
         put("locationLabel", draft.locationLabel)
         put("dateOfBirth", draft.dateOfBirth)
         put("sexAtBirth", draft.sexAtBirth)
@@ -45,7 +46,10 @@ class DraftStore(context: Context) {
         onboardingStep = json.optString("onboardingStep", "about_you"),
         displayName = json.optString("displayName"),
         countryCode = json.optString("countryCode", "PK"),
-        regionKey = json.optString("regionKey", "pk-punjab"),
+        regionKey = when {
+            !json.has("regionKey") || json.isNull("regionKey") -> null
+            else -> PlaceResolver.migrateRegionKey(json.optString("regionKey").ifBlank { null })
+        },
         locationLabel = json.optString("locationLabel", "Lahore, Punjab"),
         dateOfBirth = json.optString("dateOfBirth", "1998-05-14"),
         sexAtBirth = json.optString("sexAtBirth", "male"),

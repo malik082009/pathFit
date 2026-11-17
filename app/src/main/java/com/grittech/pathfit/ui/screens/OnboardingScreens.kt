@@ -78,8 +78,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.grittech.pathfit.domain.PaceLogic
+import com.grittech.pathfit.domain.PlaceResolver
 import com.grittech.pathfit.domain.ProfileRules
-import com.grittech.pathfit.domain.Regions
 import com.grittech.pathfit.ui.components.PrimaryButton
 import com.grittech.pathfit.ui.components.rememberFitViewModel
 import com.grittech.pathfit.ui.theme.Canvas
@@ -101,7 +101,8 @@ import kotlin.math.roundToInt
 fun AboutScreen(onNext: () -> Unit) {
     val vm = rememberFitViewModel()
     val draft = vm.state.collectAsStateWithLifecycle().value.draft
-    var pickCity by remember { mutableStateOf(false) }
+    var pickPlace by remember { mutableStateOf(false) }
+    var placeQuery by remember { mutableStateOf("") }
     OnboardScaffold(
         footer = {
             PrimaryButton(
@@ -110,7 +111,7 @@ fun AboutScreen(onNext: () -> Unit) {
                     vm.markStep("biometrics")
                     onNext()
                 },
-                enabled = draft.displayName.isNotBlank(),
+                enabled = draft.displayName.isNotBlank() && draft.locationLabel.isNotBlank() && draft.countryCode.isNotBlank(),
             )
         },
     ) {
@@ -157,13 +158,27 @@ fun AboutScreen(onNext: () -> Unit) {
                 .clip(RoundedCornerShape(16.dp))
                 .background(CardRest)
                 .border(1.dp, Line, RoundedCornerShape(16.dp))
-                .clickable { pickCity = true }
+                .clickable {
+                    placeQuery = ""
+                    pickPlace = true
+                }
                 .padding(16.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Icon(Icons.Filled.LocationOn, contentDescription = null, tint = Mint, modifier = Modifier.size(20.dp))
-            Text(draft.locationLabel, color = Ink, modifier = Modifier.weight(1f).padding(start = 10.dp), fontSize = 16.sp)
-            Icon(Icons.Filled.CheckCircle, contentDescription = null, tint = Mint, modifier = Modifier.size(22.dp))
+            Column(Modifier.weight(1f).padding(start = 10.dp)) {
+                Text(
+                    draft.locationLabel.ifBlank { "Search city or area" },
+                    color = if (draft.locationLabel.isBlank()) InkMuted else Ink,
+                    fontSize = 16.sp,
+                )
+                if (draft.regionKey != null) {
+                    Text(draft.regionKey!!, color = InkMuted, fontSize = 11.sp)
+                }
+            }
+            if (draft.locationLabel.isNotBlank()) {
+                Icon(Icons.Filled.CheckCircle, contentDescription = null, tint = Mint, modifier = Modifier.size(22.dp))
+            }
         }
         Spacer(Modifier.height(14.dp))
         Row(
@@ -185,24 +200,82 @@ fun AboutScreen(onNext: () -> Unit) {
             )
         }
     }
-    if (pickCity) {
+    if (pickPlace) {
+        val hits = PlaceResolver.search(placeQuery)
         AlertDialog(
-            onDismissRequest = { pickCity = false },
-            confirmButton = {},
-            title = { Text("Where are you based?") },
+            onDismissRequest = { pickPlace = false },
+            confirmButton = {
+                TextButton(onClick = {
+                    val typed = placeQuery.trim()
+                    if (typed.isNotBlank()) {
+                        val resolved = PlaceResolver.resolve(typed)
+                        vm.editDraft {
+                            it.copy(
+                                locationLabel = resolved.label,
+                                countryCode = resolved.countryCode,
+                                regionKey = resolved.regionKey,
+                            )
+                        }
+                    }
+                    pickPlace = false
+                }) { Text("Use search") }
+            },
+            dismissButton = {
+                TextButton(onClick = { pickPlace = false }) { Text("Cancel") }
+            },
+            title = { Text("Search where you are based") },
             text = {
-                Column(Modifier.verticalScroll(rememberScrollState())) {
-                    Regions.options.forEach { region ->
-                        Text(
-                            region.label,
-                            color = if (region.label == draft.locationLabel) Mint else Ink,
-                            modifier = Modifier.fillMaxWidth().clickable {
-                                vm.editDraft {
-                                    it.copy(locationLabel = region.label, countryCode = region.countryCode, regionKey = region.regionKey)
-                                }
-                                pickCity = false
-                            }.padding(vertical = 12.dp),
-                        )
+                Column {
+                    BasicTextField(
+                        value = placeQuery,
+                        onValueChange = { placeQuery = it },
+                        textStyle = TextStyle(color = Ink, fontSize = 16.sp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(CardRest)
+                            .border(1.dp, Line, RoundedCornerShape(12.dp))
+                            .padding(horizontal = 12.dp, vertical = 12.dp),
+                        decorationBox = { inner ->
+                            if (placeQuery.isEmpty()) Text("Lahore, Islamabad, Chennai…", color = InkMuted)
+                            inner()
+                        },
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Column(Modifier.height(280.dp).verticalScroll(rememberScrollState())) {
+                        hits.forEach { region ->
+                            Text(
+                                region.label,
+                                color = if (region.label == draft.locationLabel) Mint else Ink,
+                                modifier = Modifier.fillMaxWidth().clickable {
+                                    vm.editDraft {
+                                        it.copy(
+                                            locationLabel = region.label,
+                                            countryCode = region.countryCode,
+                                            regionKey = region.regionKey,
+                                        )
+                                    }
+                                    pickPlace = false
+                                }.padding(vertical = 12.dp),
+                            )
+                        }
+                        if (hits.isEmpty() && placeQuery.isNotBlank()) {
+                            Text(
+                                "Use “${placeQuery.trim()}” and resolve region on save",
+                                color = Mint,
+                                modifier = Modifier.fillMaxWidth().clickable {
+                                    val resolved = PlaceResolver.resolve(placeQuery)
+                                    vm.editDraft {
+                                        it.copy(
+                                            locationLabel = resolved.label,
+                                            countryCode = resolved.countryCode,
+                                            regionKey = resolved.regionKey,
+                                        )
+                                    }
+                                    pickPlace = false
+                                }.padding(vertical = 12.dp),
+                            )
+                        }
                     }
                 }
             },
