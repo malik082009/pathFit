@@ -15,10 +15,8 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Bolt
@@ -106,172 +104,132 @@ fun PreviewScreen(onBack: () -> Unit) {
             }
         }
 
-        Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 20.dp)) {
-            Text(
-                "PERSONALIZED PREVIEW",
-                color = Mint,
-                fontSize = 11.sp,
-                fontWeight = FontWeight.Bold,
-                letterSpacing = 1.sp,
-                modifier = Modifier
-                    .align(Alignment.CenterHorizontally)
-                    .clip(CircleShape)
-                    .background(Mint.copy(alpha = 0.10f))
-                    .border(1.dp, Mint.copy(alpha = 0.35f), CircleShape)
-                    .padding(horizontal = 12.dp, vertical = 6.dp),
-            )
-            Spacer(Modifier.height(10.dp))
-            Text(
-                "Your Daily Fuel Targets",
-                color = Ink,
-                fontSize = 28.sp,
-                fontWeight = FontWeight.Bold,
-                textAlign = TextAlign.Center,
-                modifier = Modifier.fillMaxWidth(),
-            )
-            Text(
-                "Personalized metabolic baseline calibrated for your body and goals.",
-                color = InkMuted,
-                textAlign = TextAlign.Center,
-                fontSize = 14.sp,
-                lineHeight = 20.sp,
-                modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
-            )
-            Spacer(Modifier.height(16.dp))
+        Column(Modifier.weight(1f).padding(horizontal = 20.dp), verticalArrangement = Arrangement.SpaceBetween) {
+            Column(Modifier.fillMaxWidth()) {
+                Text(
+                    "PERSONALIZED PREVIEW",
+                    color = Mint,
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 1.sp,
+                    modifier = Modifier
+                        .align(Alignment.CenterHorizontally)
+                        .clip(CircleShape)
+                        .background(Mint.copy(alpha = 0.10f))
+                        .border(1.dp, Mint.copy(alpha = 0.35f), CircleShape)
+                        .padding(horizontal = 10.dp, vertical = 5.dp),
+                )
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "Your Daily Fuel Targets",
+                    color = Ink,
+                    fontSize = 24.sp,
+                    fontWeight = FontWeight.Bold,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Text(
+                    "Personalized metabolic baseline for your body and goals.",
+                    color = InkMuted,
+                    textAlign = TextAlign.Center,
+                    fontSize = 13.sp,
+                    lineHeight = 18.sp,
+                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                )
+                Spacer(Modifier.height(12.dp))
 
-            if (preview == null || !preview.active) {
-                Column(
-                    Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(20.dp))
-                        .background(CardRest)
-                        .border(1.dp, Line, RoundedCornerShape(20.dp))
-                        .padding(18.dp),
-                ) {
-                    Text(preview?.blockMessage ?: "Targets are not ready yet.", color = Ink)
-                }
-            } else {
-                Column(
-                    Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(22.dp))
-                        .background(CardRest)
-                        .border(1.dp, Line, RoundedCornerShape(22.dp))
-                        .padding(18.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                ) {
-                    Row(verticalAlignment = Alignment.Bottom) {
-                        Text(formatCount(preview.heroKcal ?: 0), color = Ink, fontSize = 48.sp, fontWeight = FontWeight.ExtraBold)
-                        Text("  kcal / day", color = InkMuted, fontSize = 16.sp, modifier = Modifier.padding(bottom = 8.dp))
-                    }
-                    Spacer(Modifier.height(10.dp))
-                    Row(
+                if (preview == null || !preview.active) {
+                    Column(
                         Modifier
-                            .clip(CircleShape)
-                            .background(Canvas)
-                            .padding(horizontal = 12.dp, vertical = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(20.dp))
+                            .background(CardRest)
+                            .border(1.dp, Line, RoundedCornerShape(20.dp))
+                            .padding(16.dp),
                     ) {
-                        Box(Modifier.size(7.dp).clip(CircleShape).background(Mint))
-                        Text("  ", color = InkMuted)
-                        Text(highlightPace(preview.subtitle), fontSize = 12.sp)
+                        Text(preview?.blockMessage ?: "Targets are not ready yet.", color = Ink)
                     }
-                    if (showReach) {
-                        Spacer(Modifier.height(12.dp))
+                } else {
+                    Column(
+                        Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(20.dp))
+                            .background(CardRest)
+                            .border(1.dp, Line, RoundedCornerShape(20.dp))
+                            .padding(14.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        Row(verticalAlignment = Alignment.Bottom) {
+                            Text(formatCount(preview.heroKcal ?: 0), color = Ink, fontSize = 40.sp, fontWeight = FontWeight.ExtraBold)
+                            Text("  kcal / day", color = InkMuted, fontSize = 14.sp, modifier = Modifier.padding(bottom = 6.dp))
+                        }
+                        Spacer(Modifier.height(8.dp))
                         Row(
                             Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(14.dp))
-                                .background(Mint.copy(alpha = 0.08f))
-                                .border(1.dp, Mint.copy(alpha = 0.18f), RoundedCornerShape(14.dp))
-                                .padding(12.dp),
-                            verticalAlignment = Alignment.Top,
+                                .clip(CircleShape)
+                                .background(Canvas)
+                                .padding(horizontal = 10.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            Icon(Icons.Filled.DateRange, contentDescription = null, tint = Mint, modifier = Modifier.size(18.dp))
-                            Text(
-                                highlightReach(reach!!),
-                                fontSize = 13.sp,
-                                lineHeight = 18.sp,
-                                modifier = Modifier.padding(start = 8.dp).weight(1f),
-                            )
+                            Box(Modifier.size(7.dp).clip(CircleShape).background(Mint))
+                            Text("  ", color = InkMuted)
+                            Text(highlightPace(preview.subtitle), fontSize = 11.sp)
+                        }
+                        if (showReach) {
+                            Spacer(Modifier.height(8.dp))
+                            Row(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(Mint.copy(alpha = 0.08f))
+                                    .border(1.dp, Mint.copy(alpha = 0.18f), RoundedCornerShape(12.dp))
+                                    .padding(10.dp),
+                                verticalAlignment = Alignment.Top,
+                            ) {
+                                Icon(Icons.Filled.DateRange, contentDescription = null, tint = Mint, modifier = Modifier.size(16.dp))
+                                Text(
+                                    highlightReach(reach!!),
+                                    fontSize = 12.sp,
+                                    lineHeight = 16.sp,
+                                    modifier = Modifier.padding(start = 8.dp).weight(1f),
+                                )
+                            }
+                        }
+                        Spacer(Modifier.height(12.dp))
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                            Text("Macro Distribution", color = Ink, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                            Text("100% Calculated", color = Mint, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                        }
+                        Spacer(Modifier.height(8.dp))
+                        Row(Modifier.fillMaxWidth().height(6.dp).clip(CircleShape)) {
+                            Box(Modifier.weight(preview.proteinPct.coerceAtLeast(1).toFloat()).background(Mint))
+                            Box(Modifier.weight(preview.carbsPct.coerceAtLeast(1).toFloat()).background(Cyan))
+                            Box(Modifier.weight(preview.fatPct.coerceAtLeast(1).toFloat()).background(Amber))
+                        }
+                        Spacer(Modifier.height(8.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            CompactMacro(Icons.Filled.FitnessCenter, Mint, "Protein", preview.proteinG, preview.proteinPct, Modifier.weight(1f))
+                            CompactMacro(Icons.Filled.Bolt, Cyan, "Carbs", preview.carbsG, preview.carbsPct, Modifier.weight(1f))
+                            CompactMacro(Icons.Filled.WaterDrop, Amber, "Fats", preview.fatG, preview.fatPct, Modifier.weight(1f))
+                        }
+                        Spacer(Modifier.height(12.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            MiniStat("BMR FLOOR", preview.bmr, null, Modifier.weight(1f)) { vm.showBmr(true) }
+                            MiniStat("TDEE BURN", preview.tdee, null, Modifier.weight(1f)) { vm.showBmr(true) }
+                            MiniStat(preview.deltaLabel, preview.delta, null, Modifier.weight(1f), signed = true) { vm.showBmr(true) }
                         }
                     }
-                    Spacer(Modifier.height(14.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        MiniStat("BMR FLOOR", preview.bmr, if (showReach) null else "Burned at complete rest", Modifier.weight(1f)) {
-                            vm.showBmr(true)
-                        }
-                        MiniStat("TDEE BURN", preview.tdee, if (showReach) null else "Total daily burn + activity", Modifier.weight(1f)) {
-                            vm.showBmr(true)
-                        }
-                        MiniStat(
-                            preview.deltaLabel,
-                            preview.delta,
-                            if (showReach) null else preview.deltaCaption,
-                            Modifier.weight(1f),
-                            signed = true,
-                        ) { vm.showBmr(true) }
-                    }
-                }
-
-                Spacer(Modifier.height(18.dp))
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                    Text("Macro Distribution", color = Ink, fontWeight = FontWeight.Bold, fontSize = 18.sp)
-                    Text("100% Calculated", color = Mint, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                }
-                Spacer(Modifier.height(10.dp))
-                Row(Modifier.fillMaxWidth().height(8.dp).clip(CircleShape)) {
-                    Box(Modifier.weight(preview.proteinPct.coerceAtLeast(1).toFloat()).background(Mint))
-                    Box(Modifier.weight(preview.carbsPct.coerceAtLeast(1).toFloat()).background(Cyan))
-                    Box(Modifier.weight(preview.fatPct.coerceAtLeast(1).toFloat()).background(Amber))
-                }
-                Spacer(Modifier.height(12.dp))
-                MacroRow(Icons.Filled.FitnessCenter, Mint, "Protein", "Lean preservation", preview.proteinG, preview.proteinPct)
-                Spacer(Modifier.height(8.dp))
-                MacroRow(Icons.Filled.Bolt, Cyan, "Carbs", "Sustained energy", preview.carbsG, preview.carbsPct)
-                Spacer(Modifier.height(8.dp))
-                MacroRow(Icons.Filled.WaterDrop, Amber, "Fats", "Hormonal balance", preview.fatG, preview.fatPct)
-
-                Spacer(Modifier.height(16.dp))
-                if (showReach) {
-                    Text(
-                        "✨  Calibrated for your body, activity level, and meal preferences",
-                        color = InkMuted,
-                        fontSize = 12.sp,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                } else {
+                    Spacer(Modifier.height(10.dp))
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.Center,
                     ) {
-                        Icon(Icons.Filled.Verified, contentDescription = null, tint = Mint, modifier = Modifier.size(16.dp))
-                        Text("  Clinically verified safe for your metabolic profile", color = InkMuted, fontSize = 12.sp)
+                        Icon(Icons.Filled.Verified, contentDescription = null, tint = Mint, modifier = Modifier.size(14.dp))
+                        Text("  Calibrated for your metabolic profile", color = InkMuted, fontSize = 11.sp)
                     }
                 }
-                if (preview.clinicalPending) {
-                    Text(
-                        "Clinical review can refine these numbers later.",
-                        color = InkMuted,
-                        fontSize = 12.sp,
-                        modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
-                        textAlign = TextAlign.Center,
-                    )
-                }
-                if (showReach) {
-                    Spacer(Modifier.height(14.dp))
-                    Text(
-                        "Next: Pick the meals you regularly eat for quick 1-tap logging",
-                        color = InkMuted,
-                        fontSize = 13.sp,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                }
             }
-            Spacer(Modifier.height(18.dp))
         }
 
         Column(Modifier.padding(horizontal = 20.dp, vertical = 12.dp)) {
@@ -372,37 +330,25 @@ private fun MiniStat(
 }
 
 @Composable
-private fun MacroRow(
+private fun CompactMacro(
     icon: ImageVector,
     tint: Color,
     title: String,
-    caption: String,
     grams: Int?,
     pct: Int,
+    modifier: Modifier,
 ) {
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(16.dp))
-            .background(CardRest)
-            .border(1.dp, Line, RoundedCornerShape(16.dp))
-            .padding(12.dp),
-        verticalAlignment = Alignment.CenterVertically,
+    Column(
+        modifier
+            .clip(RoundedCornerShape(14.dp))
+            .background(Canvas)
+            .padding(10.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Box(
-            Modifier
-                .size(40.dp)
-                .clip(RoundedCornerShape(12.dp))
-                .background(tint.copy(alpha = 0.15f)),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(20.dp))
-        }
-        Column(Modifier.weight(1f).padding(start = 12.dp)) {
-            Text(title, color = Ink, fontWeight = FontWeight.SemiBold)
-            Text(caption, color = InkMuted, fontSize = 12.sp)
-        }
-        Text("${grams ?: "—"} g", color = tint, fontWeight = FontWeight.Bold, fontSize = 16.sp)
-        Text(" ($pct%)", color = InkMuted, fontSize = 12.sp)
+        Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(18.dp))
+        Spacer(Modifier.height(4.dp))
+        Text(title, color = InkMuted, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+        Text("${grams ?: "—"}g", color = tint, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+        Text("$pct%", color = InkMuted, fontSize = 10.sp)
     }
 }

@@ -351,22 +351,82 @@ class FitPathRepository(context: Context) {
         batch.commit().await()
     }
 
-    suspend fun addGlass(dayKey: String): Outcome<Unit> {
+    suspend fun addGlass(dayKey: String, timezone: String): Outcome<Unit> =
+        setWaterGlasses(dayKey, currentWaterGlasses(dayKey) + 1, timezone)
+
+    suspend fun setWaterGlasses(dayKey: String, glasses: Int, timezone: String): Outcome<Unit> {
         val uid = currentUid() ?: return Outcome.Err("Sign in required")
+        val target = glasses.coerceIn(0, 8)
+        val tz = timezone.ifBlank { "Asia/Karachi" }
         return try {
-            db.collection("users").document(uid).collection("drinkLogs").document(UUID.randomUUID().toString()).set(
-                mapOf(
-                    "schemaVersion" to 1,
-                    "type" to "water",
-                    "amountMl" to 250,
-                    "dayKey" to dayKey,
-                    "loggedAt" to Timestamp.now(),
-                    "clientMutationId" to UUID.randomUUID().toString(),
-                ),
-            ).await()
+            val col = db.collection("users").document(uid).collection("drinkLogs")
+            val docs = col.whereEqualTo("dayKey", dayKey).get().await().documents
+                .filter { doc ->
+                    val data = doc.data ?: return@filter false
+                    val type = data["type"] as? String ?: "water"
+                    type == "water" && data["deletedAt"] == null
+                }
+            val current = docs.size
+            when {
+                target > current -> {
+                    val batch = db.batch()
+                    repeat(target - current) {
+                        // FitPath rules: doc id must equal clientMutationId; required fields below.
+                        val mutationId = UUID.randomUUID().toString()
+                        batch.set(
+                            col.document(mutationId),
+                            mapOf(
+                                "schemaVersion" to 1,
+                                "clientMutationId" to mutationId,
+                                "type" to "water",
+                                "amountMl" to 250,
+                                "dayKey" to dayKey,
+                                "timezone" to tz,
+                                "loggedAt" to Timestamp.now(),
+                                "source" to "manual",
+                                "revision" to 1,
+                                "deletedAt" to null,
+                                "createdAt" to FieldValue.serverTimestamp(),
+                                "updatedAt" to FieldValue.serverTimestamp(),
+                            ),
+                        )
+                    }
+                    batch.commit().await()
+                }
+                target < current -> {
+                    val batch = db.batch()
+                    docs.sortedByDescending { (it.getTimestamp("loggedAt")?.seconds ?: 0L) }
+                        .take(current - target)
+                        .forEach { doc ->
+                            batch.update(
+                                doc.reference,
+                                mapOf(
+                                    "deletedAt" to FieldValue.serverTimestamp(),
+                                    "updatedAt" to FieldValue.serverTimestamp(),
+                                ),
+                            )
+                        }
+                    batch.commit().await()
+                }
+            }
             Outcome.Ok(Unit)
         } catch (error: Exception) {
+            Log.w(TAG, "setWaterGlasses failed: ${error.fitMessage()}")
             Outcome.Err(error.fitMessage())
+        }
+    }
+
+    private suspend fun currentWaterGlasses(dayKey: String): Int {
+        val uid = currentUid() ?: return 0
+        return try {
+            db.collection("users").document(uid).collection("drinkLogs")
+                .whereEqualTo("dayKey", dayKey)
+                .get().await().documents.count { doc ->
+                    val data = doc.data ?: return@count false
+                    data["type"] == "water" && data["deletedAt"] == null
+                }.coerceAtMost(8)
+        } catch (_: Exception) {
+            0
         }
     }
 

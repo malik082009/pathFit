@@ -22,6 +22,9 @@ import kotlin.math.roundToInt
  * Place → countryCode / regionKey resolver (Maps/Places geocode handoff).
  * PK keys must match Common meals seeds — never invent; never write `pk-ict`.
  */
+data class CountryNode(val code: String, val name: String)
+data class RegionNode(val key: String, val name: String, val countryCode: String)
+
 object PlaceResolver {
     val options = listOf(
         RegionOption("Lahore, Punjab", "PK", "pk-punjab"),
@@ -41,6 +44,41 @@ object PlaceResolver {
         RegionOption("Dhaka, Bangladesh", "BD", "bd-dhaka"),
         RegionOption("London, United Kingdom", "GB", "gb-london"),
     )
+
+    private val countryNames = mapOf(
+        "PK" to "Pakistan",
+        "IN" to "India",
+        "BD" to "Bangladesh",
+        "GB" to "United Kingdom",
+    )
+
+    private val regionNames = mapOf(
+        "pk-punjab" to "Punjab",
+        "pk-sindh" to "Sindh",
+        "pk-islamabad" to "Islamabad Capital",
+        "pk-kpk" to "Khyber Pakhtunkhwa",
+        "pk-balochistan" to "Balochistan",
+        "in-south" to "South India",
+        "in-delhi" to "Delhi",
+        "in-maharashtra" to "Maharashtra",
+        "bd-dhaka" to "Dhaka",
+        "gb-london" to "London",
+    )
+
+    fun countries(): List<CountryNode> = countryNames.map { (code, name) -> CountryNode(code, name) }
+        .sortedBy { it.name }
+
+    fun regionsFor(countryCode: String): List<RegionNode> = options
+        .asSequence()
+        .filter { it.countryCode.equals(countryCode, ignoreCase = true) && it.regionKey != null }
+        .map { it.regionKey!! }
+        .distinct()
+        .map { key -> RegionNode(key, regionNames[key] ?: key, countryCode.uppercase()) }
+        .sortedBy { it.name }
+        .toList()
+
+    fun citiesFor(regionKey: String): List<RegionOption> =
+        options.filter { it.regionKey == migrateRegionKey(regionKey) }
 
     fun migrateRegionKey(key: String?): String? = when (key?.trim()?.lowercase()) {
         null, "" -> null
@@ -397,11 +435,43 @@ object PaceLogic {
         else -> "Calibrate your weekly rate of change and calculate exact daily walking and calorie burn targets to reach your goal safely."
     }
 
-    fun badge(goal: String, pace: Double): String = when (goal) {
-        "build_muscle" -> "LEAN HYPERTROPHY (RECOMMENDED)"
-        "maintain" -> "WEIGHT MAINTENANCE"
-        "eat_healthier" -> "HEALTHIER EATING"
-        else -> if (pace == 0.5) "STEADY FAT LOSS (RECOMMENDED)" else "WEEKLY FAT-LOSS PACE"
+    fun badge(goal: String, pace: Double): String {
+        val recommended = abs(pace - defaultPace(goal)) < 0.001
+        return when (goal) {
+            "build_muscle" -> if (recommended) "LEAN HYPERTROPHY (RECOMMENDED)" else "LEAN HYPERTROPHY PACE"
+            "maintain" -> "WEIGHT MAINTENANCE"
+            "eat_healthier" -> "HEALTHIER EATING"
+            else -> if (recommended) "STEADY FAT LOSS (RECOMMENDED)" else "WEEKLY FAT-LOSS PACE"
+        }
+    }
+
+    fun movementCaption(goal: String, pace: Double): String = when (goal) {
+        "build_muscle" -> when {
+            pace <= 0.15 -> "~4.5 km • 40–50 mins daily walking"
+            pace <= 0.25 -> "~5.5 km • 50–60 mins daily walking"
+            pace <= 0.40 -> "~6.5 km • 55–70 mins daily walking"
+            else -> "~7.5 km • 65–80 mins daily walking"
+        }
+        "maintain", "eat_healthier" -> "~4.5 km • 40–55 mins daily walking"
+        else -> when {
+            pace <= 0.25 -> "~5.0 km • 45–60 mins total daily walking"
+            pace <= 0.50 -> "~6.5 km • 60–75 mins total daily walking"
+            pace <= 0.75 -> "~7.5 km • 70–85 mins total daily walking"
+            else -> "~8.5 km • 80–95 mins total daily walking"
+        }
+    }
+
+    fun burnSplitCaption(goal: String, pace: Double): String {
+        if (goal == "build_muscle" || goal == "maintain" || goal == "eat_healthier") return ""
+        val mid = when {
+            pace <= 0.25 -> 350
+            pace <= 0.50 -> 500
+            pace <= 0.75 -> 625
+            else -> 775
+        }
+        val walk = (mid * 0.65).roundToInt()
+        val neat = mid - walk
+        return "~$walk kcal Walking (65%)  ·  ~$neat kcal Daily NEAT (35%)"
     }
 
     fun reachPhrase(currentKg: Double, targetKg: Double, paceKgWeek: Double, now: Long = System.currentTimeMillis()): String? {
@@ -467,10 +537,21 @@ object ProfileRules {
         return years
     }
 
+    fun cmToTotalInches(cm: Int): Int = (cm / 2.54).roundToInt()
+
+    fun inchesToCm(inches: Int): Int = (inches * 2.54).roundToInt().coerceIn(120, 230)
+
     fun cmToFeet(cm: Int): String {
-        val inches = (cm / 2.54).roundToInt()
+        val inches = cmToTotalInches(cm)
         return "${inches / 12}'${inches % 12}\""
     }
+
+    fun bumpHeightCm(heightCm: Int, heightUnit: String, delta: Int): Int =
+        if (heightUnit == "ft") {
+            inchesToCm(cmToTotalInches(heightCm) + delta)
+        } else {
+            (heightCm + delta).coerceIn(120, 230)
+        }
 
     fun kgToLb(kg: Double): String = String.format(Locale.US, "%.1f", kg * 2.20462)
 

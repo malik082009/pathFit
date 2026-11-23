@@ -17,7 +17,17 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import android.Manifest
+import android.annotation.SuppressLint
+import android.content.Context
+import android.content.pm.PackageManager
+import android.location.Geocoder
+import android.location.LocationManager
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -42,6 +52,7 @@ import androidx.compose.material.icons.filled.HealthAndSafety
 import androidx.compose.material.icons.filled.LocalFireDepartment
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Male
+import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.RadioButtonUnchecked
 import androidx.compose.material.icons.filled.Remove
@@ -71,15 +82,18 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.grittech.pathfit.domain.PaceLogic
 import com.grittech.pathfit.domain.PlaceResolver
 import com.grittech.pathfit.domain.ProfileRules
+import com.grittech.pathfit.model.RegionOption
 import com.grittech.pathfit.ui.components.PrimaryButton
 import com.grittech.pathfit.ui.components.rememberFitViewModel
 import com.grittech.pathfit.ui.theme.Canvas
@@ -101,8 +115,39 @@ import kotlin.math.roundToInt
 fun AboutScreen(onNext: () -> Unit) {
     val vm = rememberFitViewModel()
     val draft = vm.state.collectAsStateWithLifecycle().value.draft
+    val context = LocalContext.current
     var pickPlace by remember { mutableStateOf(false) }
     var placeQuery by remember { mutableStateOf("") }
+    var browseCountry by remember { mutableStateOf(draft.countryCode.ifBlank { "PK" }) }
+    var browseRegion by remember { mutableStateOf(draft.regionKey) }
+    var locationHint by remember { mutableStateOf<String?>(null) }
+    fun applyPlace(option: RegionOption) {
+        vm.editDraft {
+            it.copy(
+                locationLabel = option.label,
+                countryCode = option.countryCode,
+                regionKey = option.regionKey,
+            )
+        }
+        browseCountry = option.countryCode
+        browseRegion = option.regionKey
+        pickPlace = false
+        locationHint = null
+    }
+    fun useCurrentLocation() {
+        val resolved = resolveDevicePlace(context)
+        if (resolved != null) {
+            applyPlace(resolved)
+        } else {
+            locationHint = "Location unavailable. Choose a country, region, and city below."
+        }
+    }
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions(),
+    ) { grants ->
+        if (grants.values.any { it }) useCurrentLocation()
+        else locationHint = "Permission denied. Choose a country, region, and city below."
+    }
     OnboardScaffold(
         footer = {
             PrimaryButton(
@@ -201,31 +246,54 @@ fun AboutScreen(onNext: () -> Unit) {
         }
     }
     if (pickPlace) {
-        val hits = PlaceResolver.search(placeQuery)
+        val hits = if (placeQuery.isNotBlank()) {
+            PlaceResolver.search(placeQuery)
+        } else {
+            browseRegion?.let { PlaceResolver.citiesFor(it) }.orEmpty()
+        }
+        val regions = PlaceResolver.regionsFor(browseCountry)
         AlertDialog(
             onDismissRequest = { pickPlace = false },
             confirmButton = {
                 TextButton(onClick = {
                     val typed = placeQuery.trim()
-                    if (typed.isNotBlank()) {
-                        val resolved = PlaceResolver.resolve(typed)
-                        vm.editDraft {
-                            it.copy(
-                                locationLabel = resolved.label,
-                                countryCode = resolved.countryCode,
-                                regionKey = resolved.regionKey,
-                            )
-                        }
-                    }
-                    pickPlace = false
+                    if (typed.isNotBlank()) applyPlace(PlaceResolver.resolve(typed))
+                    else pickPlace = false
                 }) { Text("Use search") }
             },
             dismissButton = {
                 TextButton(onClick = { pickPlace = false }) { Text("Cancel") }
             },
-            title = { Text("Search where you are based") },
+            title = { Text("Where are you based?") },
             text = {
                 Column {
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(Mint.copy(alpha = 0.12f))
+                            .clickable {
+                                val fine = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+                                val coarse = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+                                if (fine || coarse) useCurrentLocation()
+                                else permissionLauncher.launch(
+                                    arrayOf(
+                                        Manifest.permission.ACCESS_FINE_LOCATION,
+                                        Manifest.permission.ACCESS_COARSE_LOCATION,
+                                    ),
+                                )
+                            }
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(Icons.Filled.MyLocation, contentDescription = null, tint = Mint, modifier = Modifier.size(18.dp))
+                        Text("  Use current location", color = Mint, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                    }
+                    if (locationHint != null) {
+                        Spacer(Modifier.height(8.dp))
+                        Text(locationHint!!, color = InkMuted, fontSize = 12.sp)
+                    }
+                    Spacer(Modifier.height(10.dp))
                     BasicTextField(
                         value = placeQuery,
                         onValueChange = { placeQuery = it },
@@ -237,43 +305,75 @@ fun AboutScreen(onNext: () -> Unit) {
                             .border(1.dp, Line, RoundedCornerShape(12.dp))
                             .padding(horizontal = 12.dp, vertical = 12.dp),
                         decorationBox = { inner ->
-                            if (placeQuery.isEmpty()) Text("Lahore, Islamabad, Chennai…", color = InkMuted)
+                            if (placeQuery.isEmpty()) Text("Search city…", color = InkMuted)
                             inner()
                         },
                     )
-                    Spacer(Modifier.height(8.dp))
-                    Column(Modifier.height(280.dp).verticalScroll(rememberScrollState())) {
+                    Spacer(Modifier.height(10.dp))
+                    Text("Country", color = InkMuted, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    Spacer(Modifier.height(6.dp))
+                    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        PlaceResolver.countries().forEach { country ->
+                            val selected = country.code == browseCountry
+                            Text(
+                                country.name,
+                                color = if (selected) OnMint else Ink,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                modifier = Modifier
+                                    .clip(CircleShape)
+                                    .background(if (selected) Mint else CardRest)
+                                    .border(1.dp, if (selected) Mint else Line, CircleShape)
+                                    .clickable {
+                                        browseCountry = country.code
+                                        browseRegion = PlaceResolver.regionsFor(country.code).firstOrNull()?.key
+                                        placeQuery = ""
+                                    }
+                                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(10.dp))
+                    Text("Region", color = InkMuted, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    Spacer(Modifier.height(6.dp))
+                    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        regions.forEach { region ->
+                            val selected = region.key == browseRegion
+                            Text(
+                                region.name,
+                                color = if (selected) OnMint else Ink,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                modifier = Modifier
+                                    .clip(CircleShape)
+                                    .background(if (selected) Mint else CardRest)
+                                    .border(1.dp, if (selected) Mint else Line, CircleShape)
+                                    .clickable {
+                                        browseRegion = region.key
+                                        placeQuery = ""
+                                    }
+                                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(10.dp))
+                    Text("City", color = InkMuted, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    Spacer(Modifier.height(4.dp))
+                    Column(Modifier.height(180.dp).verticalScroll(rememberScrollState())) {
                         hits.forEach { region ->
                             Text(
                                 region.label,
                                 color = if (region.label == draft.locationLabel) Mint else Ink,
-                                modifier = Modifier.fillMaxWidth().clickable {
-                                    vm.editDraft {
-                                        it.copy(
-                                            locationLabel = region.label,
-                                            countryCode = region.countryCode,
-                                            regionKey = region.regionKey,
-                                        )
-                                    }
-                                    pickPlace = false
-                                }.padding(vertical = 12.dp),
+                                modifier = Modifier.fillMaxWidth().clickable { applyPlace(region) }.padding(vertical = 12.dp),
                             )
                         }
-                        if (hits.isEmpty() && placeQuery.isNotBlank()) {
+                        if (hits.isEmpty()) {
                             Text(
-                                "Use “${placeQuery.trim()}” and resolve region on save",
-                                color = Mint,
-                                modifier = Modifier.fillMaxWidth().clickable {
-                                    val resolved = PlaceResolver.resolve(placeQuery)
-                                    vm.editDraft {
-                                        it.copy(
-                                            locationLabel = resolved.label,
-                                            countryCode = resolved.countryCode,
-                                            regionKey = resolved.regionKey,
-                                        )
-                                    }
-                                    pickPlace = false
-                                }.padding(vertical = 12.dp),
+                                if (placeQuery.isNotBlank()) "No match. Tap Use search to resolve."
+                                else "Select a region to load cities.",
+                                color = InkMuted,
+                                fontSize = 13.sp,
+                                modifier = Modifier.padding(vertical = 12.dp),
                             )
                         }
                     }
@@ -290,13 +390,6 @@ fun BiometricsScreen(onNext: () -> Unit, onBack: () -> Unit) {
     val draft = vm.state.collectAsStateWithLifecycle().value.draft
     var showDate by remember { mutableStateOf(false) }
     val age = ProfileRules.ageYears(draft.dateOfBirth)
-    val strategy = ProfileRules.strategyCopy(draft)
-    val deltaKg = ((draft.targetWeightKg - draft.weightKg) * 10).roundToInt() / 10.0
-    val goalCaption = when {
-        abs(deltaKg) < 0.05 -> "stabilization target"
-        deltaKg < 0 -> "${String.format(Locale.US, "%.1f", abs(deltaKg))} kg target"
-        else -> "+${String.format(Locale.US, "%.1f", deltaKg)} kg target"
-    }
     OnboardScaffold(
         footer = {
             PrimaryButton("Continue to Activity & Goals", onClick = {
@@ -416,46 +509,15 @@ fun BiometricsScreen(onNext: () -> Unit, onBack: () -> Unit) {
             Spacer(Modifier.height(8.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 StepperIcon(false, Modifier.weight(1f)) {
-                    vm.editDraft { it.copy(heightCm = (it.heightCm - 1).coerceIn(120, 230)) }
+                    vm.editDraft {
+                        it.copy(heightCm = ProfileRules.bumpHeightCm(it.heightCm, it.heightUnit, -1))
+                    }
                 }
                 StepperIcon(true, Modifier.weight(1f)) {
-                    vm.editDraft { it.copy(heightCm = (it.heightCm + 1).coerceIn(120, 230)) }
+                    vm.editDraft {
+                        it.copy(heightCm = ProfileRules.bumpHeightCm(it.heightCm, it.heightUnit, 1))
+                    }
                 }
-            }
-        }
-        Spacer(Modifier.height(12.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            WeightCard(
-                label = "CURRENT WEIGHT",
-                value = String.format(Locale.US, "%.1f", draft.weightKg),
-                caption = "${ProfileRules.kgToLb(draft.weightKg)} lbs",
-                modifier = Modifier.weight(1f),
-                onMinus = { vm.editDraft { it.copy(weightKg = (it.weightKg - 0.5).coerceIn(30.0, 300.0)) } },
-                onPlus = { vm.editDraft { it.copy(weightKg = (it.weightKg + 0.5).coerceIn(30.0, 300.0)) } },
-            )
-            GoalWeightCard(
-                value = String.format(Locale.US, "%.1f", draft.targetWeightKg),
-                caption = goalCaption,
-                modifier = Modifier.weight(1f),
-                onMinus = { vm.editDraft { it.copy(targetWeightKg = (it.targetWeightKg - 0.5).coerceIn(30.0, 300.0)) } },
-                onPlus = { vm.editDraft { it.copy(targetWeightKg = (it.targetWeightKg + 0.5).coerceIn(30.0, 300.0)) } },
-            )
-        }
-        Spacer(Modifier.height(12.dp))
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(18.dp))
-                .background(CardRest)
-                .border(1.dp, Line, RoundedCornerShape(18.dp))
-                .padding(16.dp),
-            verticalAlignment = Alignment.Top,
-        ) {
-            Icon(Icons.Filled.HealthAndSafety, contentDescription = null, tint = Mint, modifier = Modifier.size(22.dp))
-            Column(Modifier.padding(start = 10.dp)) {
-                Text(strategy.first, color = Ink, fontWeight = FontWeight.SemiBold)
-                Spacer(Modifier.height(4.dp))
-                Text(strategy.second, color = InkMuted, fontSize = 13.sp, lineHeight = 18.sp)
             }
         }
     }
@@ -481,6 +543,13 @@ fun BiometricsScreen(onNext: () -> Unit, onBack: () -> Unit) {
 fun ActivityScreen(onNext: () -> Unit, onBack: () -> Unit) {
     val vm = rememberFitViewModel()
     val draft = vm.state.collectAsStateWithLifecycle().value.draft
+    val strategy = ProfileRules.strategyCopy(draft)
+    val deltaKg = ((draft.targetWeightKg - draft.weightKg) * 10).roundToInt() / 10.0
+    val goalCaption = when {
+        abs(deltaKg) < 0.05 -> "stabilization target"
+        deltaKg < 0 -> "${String.format(Locale.US, "%.1f", abs(deltaKg))} kg target"
+        else -> "+${String.format(Locale.US, "%.1f", deltaKg)} kg target"
+    }
     OnboardScaffold(
         footer = {
             PrimaryButton("Continue to Target Pace & Burn", onClick = {
@@ -524,6 +593,43 @@ fun ActivityScreen(onNext: () -> Unit, onBack: () -> Unit) {
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             GoalTile("Build Muscle", "Lean muscle & strength", Icons.Filled.FitnessCenter, draft.goal == "build_muscle", Modifier.weight(1f)) { vm.setGoal("build_muscle") }
             GoalTile("Eat Healthier", "Better nutrition & energy", Icons.Filled.Favorite, draft.goal == "eat_healthier", Modifier.weight(1f)) { vm.setGoal("eat_healthier") }
+        }
+        Spacer(Modifier.height(18.dp))
+        Text("CURRENT & GOAL WEIGHT", color = Ink, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.6.sp)
+        Spacer(Modifier.height(10.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            WeightCard(
+                label = "CURRENT WEIGHT",
+                value = String.format(Locale.US, "%.1f", draft.weightKg),
+                caption = "${ProfileRules.kgToLb(draft.weightKg)} lbs",
+                modifier = Modifier.weight(1f),
+                onMinus = { vm.editDraft { it.copy(weightKg = (it.weightKg - 0.5).coerceIn(30.0, 300.0)) } },
+                onPlus = { vm.editDraft { it.copy(weightKg = (it.weightKg + 0.5).coerceIn(30.0, 300.0)) } },
+            )
+            GoalWeightCard(
+                value = String.format(Locale.US, "%.1f", draft.targetWeightKg),
+                caption = goalCaption,
+                modifier = Modifier.weight(1f),
+                onMinus = { vm.editDraft { it.copy(targetWeightKg = (it.targetWeightKg - 0.5).coerceIn(30.0, 300.0)) } },
+                onPlus = { vm.editDraft { it.copy(targetWeightKg = (it.targetWeightKg + 0.5).coerceIn(30.0, 300.0)) } },
+            )
+        }
+        Spacer(Modifier.height(12.dp))
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(18.dp))
+                .background(CardRest)
+                .border(1.dp, Line, RoundedCornerShape(18.dp))
+                .padding(16.dp),
+            verticalAlignment = Alignment.Top,
+        ) {
+            Icon(Icons.Filled.HealthAndSafety, contentDescription = null, tint = Mint, modifier = Modifier.size(22.dp))
+            Column(Modifier.padding(start = 10.dp)) {
+                Text(strategy.first, color = Ink, fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.height(4.dp))
+                Text(strategy.second, color = InkMuted, fontSize = 13.sp, lineHeight = 18.sp)
+            }
         }
     }
 }
@@ -609,10 +715,12 @@ fun PaceScreen(onNext: () -> Unit, onBack: () -> Unit) {
                         color = Mint,
                         fontSize = 9.sp,
                         fontWeight = FontWeight.Bold,
+                        textAlign = TextAlign.Center,
                         modifier = Modifier
+                            .widthIn(max = 140.dp)
                             .clip(CircleShape)
                             .background(Mint.copy(alpha = 0.12f))
-                            .padding(horizontal = 8.dp, vertical = 6.dp),
+                            .padding(horizontal = 10.dp, vertical = 6.dp),
                         maxLines = 2,
                     )
                 }
@@ -701,7 +809,7 @@ fun PaceScreen(onNext: () -> Unit, onBack: () -> Unit) {
                     metric = "TARGET DAILY MOVEMENT",
                     value = PaceLogic.stepsBand(draft.goal, draft.weeklyPaceKg),
                     unit = "steps / day",
-                    caption = "~5.5 km • 50–60 mins daily walking",
+                    caption = PaceLogic.movementCaption(draft.goal, draft.weeklyPaceKg),
                 )
             }
         } else {
@@ -718,7 +826,7 @@ fun PaceScreen(onNext: () -> Unit, onBack: () -> Unit) {
                     metric = "DAILY TARGET STEPS",
                     value = PaceLogic.stepsBand(draft.goal, draft.weeklyPaceKg),
                     unit = "steps / day",
-                    caption = "~6.5 km • 60–75 mins total daily walking",
+                    caption = PaceLogic.movementCaption(draft.goal, draft.weeklyPaceKg),
                 )
             }
             Spacer(Modifier.height(12.dp))
@@ -738,8 +846,13 @@ fun PaceScreen(onNext: () -> Unit, onBack: () -> Unit) {
                     caption = burn.second,
                 )
                 Spacer(Modifier.height(8.dp))
-                Text("~320 kcal Walking (65%)  ·  ~180 kcal Daily NEAT (35%)", color = InkMuted, fontSize = 12.sp)
-                Spacer(Modifier.height(10.dp))
+                val burnSplit = PaceLogic.burnSplitCaption(draft.goal, draft.weeklyPaceKg)
+                if (burnSplit.isNotBlank()) {
+                    Text(burnSplit, color = InkMuted, fontSize = 12.sp)
+                    Spacer(Modifier.height(10.dp))
+                } else {
+                    Spacer(Modifier.height(10.dp))
+                }
                 Row(
                     Modifier
                         .fillMaxWidth()
@@ -1247,3 +1360,31 @@ private fun prettyDobShort(iso: String): String = runCatching {
     val date = SimpleDateFormat("yyyy-MM-dd", Locale.US).parse(iso) ?: return iso
     SimpleDateFormat("d MMM", Locale.US).format(date)
 }.getOrDefault(iso)
+
+@SuppressLint("MissingPermission")
+private fun resolveDevicePlace(context: Context): RegionOption? {
+    val fine = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+    val coarse = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+    if (!fine && !coarse) return null
+    val manager = context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager ?: return null
+    val location = sequenceOf(
+        LocationManager.NETWORK_PROVIDER,
+        LocationManager.GPS_PROVIDER,
+        LocationManager.PASSIVE_PROVIDER,
+    ).mapNotNull { provider ->
+        runCatching { manager.getLastKnownLocation(provider) }.getOrNull()
+    }.maxByOrNull { it.time } ?: return null
+    if (!Geocoder.isPresent()) {
+        return PlaceResolver.resolve("${location.latitude},${location.longitude}")
+    }
+    val address = runCatching {
+        @Suppress("DEPRECATION")
+        Geocoder(context, Locale.getDefault()).getFromLocation(location.latitude, location.longitude, 1)
+    }.getOrNull()?.firstOrNull() ?: return null
+    val label = listOfNotNull(address.locality, address.adminArea, address.countryName)
+        .filter { it.isNotBlank() }
+        .distinct()
+        .joinToString(", ")
+        .ifBlank { address.getAddressLine(0).orEmpty() }
+    return PlaceResolver.resolve(label, address.countryCode)
+}

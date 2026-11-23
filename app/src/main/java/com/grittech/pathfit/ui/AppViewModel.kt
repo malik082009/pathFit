@@ -194,10 +194,17 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    private var draftSaveJob: Job? = null
+
     fun editDraft(block: (OnboardingDraft) -> OnboardingDraft) {
         val next = block(_state.value.draft)
         _state.update { it.copy(draft = next) }
-        repo.currentUid()?.let { repo.drafts.save(it, next) }
+        val uid = repo.currentUid() ?: return
+        draftSaveJob?.cancel()
+        draftSaveJob = viewModelScope.launch {
+            delay(280)
+            repo.drafts.save(uid, _state.value.draft)
+        }
     }
 
     fun markStep(step: String) = editDraft { it.copy(onboardingStep = step) }
@@ -494,6 +501,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         repo.currentUid()?.let { bindDay(it, next) }
     }
 
+    fun setDayKey(dayKey: String) {
+        val tz = _state.value.draft.timezone
+        val next = DayClock.resolveKey(dayKey, tz)
+        _state.update { it.copy(dayKey = next) }
+        repo.currentUid()?.let { bindDay(it, next) }
+    }
+
     fun openAdjust() {
         val usual = heroUsual() ?: return
         _state.update { it.copy(showAdjust = true, adjustItems = usual.items) }
@@ -547,10 +561,22 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun addGlass() {
+        val current = (_state.value.waterMl / 250).coerceIn(0, 8)
+        setWaterGlasses(current + 1)
+    }
+
+    fun setWaterGlasses(count: Int) {
+        val target = count.coerceIn(0, 8)
+        val previousMl = _state.value.waterMl
+        val dayKey = _state.value.dayKey
+        val timezone = _state.value.draft.timezone
+        _state.update { it.copy(waterMl = target * 250) }
         viewModelScope.launch {
-            when (val result = repo.addGlass(_state.value.dayKey)) {
-                is Outcome.Err -> _state.update { it.copy(error = result.message) }
-                is Outcome.Ok -> _state.update { it.copy(snackbar = logMessage("Added 250 ml")) }
+            when (val result = repo.setWaterGlasses(dayKey, target, timezone)) {
+                is Outcome.Err -> _state.update {
+                    it.copy(waterMl = previousMl, error = result.message, snackbar = result.message)
+                }
+                is Outcome.Ok -> Unit
             }
         }
     }

@@ -50,9 +50,13 @@ import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.WaterDrop
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.DatePicker
+import androidx.compose.material3.DatePickerDialog
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -171,10 +175,12 @@ fun HomeScreen(onOpenStaples: () -> Unit) {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun TodayBody(onOpenStaples: () -> Unit) {
     val vm = rememberFitViewModel()
     val state by vm.state.collectAsStateWithLifecycle()
+    var showDayPicker by remember { mutableStateOf(false) }
     val eatenLogs = state.logs.filter { !it.deleted && it.status in setOf("eaten", "partial") }
     val eaten = eatenLogs.sumOf { it.kcal }
     val protein = eatenLogs.sumOf { it.proteinG }
@@ -203,7 +209,7 @@ private fun TodayBody(onOpenStaples: () -> Unit) {
                 .clip(CircleShape)
                 .background(CardRest)
                 .border(1.dp, Line, CircleShape)
-                .clickable { vm.shiftDay(1) }
+                .clickable { showDayPicker = true }
                 .padding(horizontal = 12.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -474,19 +480,19 @@ private fun TodayBody(onOpenStaples: () -> Unit) {
     }
 
     Spacer(Modifier.height(14.dp))
-    val glasses = (state.waterMl / 250).coerceAtMost(8)
+    val glasses = (state.waterMl / 250).coerceIn(0, 8)
     Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(22.dp)).background(CardRest).border(1.dp, Line, RoundedCornerShape(22.dp)).padding(14.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Icon(Icons.Filled.LocalDrink, contentDescription = null, tint = Cyan)
             Column(Modifier.weight(1f).padding(start = 8.dp)) {
                 Text("Daily Hydration", color = Ink, fontWeight = FontWeight.SemiBold)
-                Text("$glasses / 8 glasses · ${formatCount(state.waterMl)} ml", color = InkMuted, fontSize = 12.sp)
+                Text("$glasses / 8 glasses · ${formatCount(glasses * 250)} ml", color = InkMuted, fontSize = 12.sp)
             }
             Row(
                 Modifier
                     .clip(CircleShape)
                     .background(Cyan.copy(alpha = 0.14f))
-                    .clickable { vm.addGlass() }
+                    .clickable(enabled = glasses < 8) { vm.setWaterGlasses(glasses + 1) }
                     .padding(horizontal = 12.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
@@ -498,7 +504,11 @@ private fun TodayBody(onOpenStaples: () -> Unit) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             repeat(8) { index ->
                 val filled = index < glasses
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                val target = if (filled && index == glasses - 1) glasses - 1 else index + 1
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier.clickable { vm.setWaterGlasses(target) },
+                ) {
                     Box(
                         Modifier
                             .size(34.dp)
@@ -509,7 +519,7 @@ private fun TodayBody(onOpenStaples: () -> Unit) {
                     ) {
                         Icon(
                             Icons.Filled.LocalDrink,
-                            contentDescription = null,
+                            contentDescription = if (filled) "Remove glass ${index + 1}" else "Add glass ${index + 1}",
                             tint = if (filled) Cyan else InkMuted,
                             modifier = Modifier.size(18.dp),
                         )
@@ -518,6 +528,28 @@ private fun TodayBody(onOpenStaples: () -> Unit) {
                 }
             }
         }
+    }
+
+    if (showDayPicker) {
+        val initialMillis = remember(dayKey) {
+            runCatching {
+                SimpleDateFormat("yyyy-MM-dd", Locale.US).parse(dayKey)?.time
+            }.getOrNull()
+        }
+        val picker = rememberDatePickerState(initialSelectedDateMillis = initialMillis)
+        DatePickerDialog(
+            onDismissRequest = { showDayPicker = false },
+            confirmButton = {
+                TextButton(onClick = {
+                    picker.selectedDateMillis?.let { millis ->
+                        val key = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date(millis))
+                        vm.setDayKey(key)
+                    }
+                    showDayPicker = false
+                }) { Text("Set") }
+            },
+            dismissButton = { TextButton(onClick = { showDayPicker = false }) { Text("Cancel") } },
+        ) { DatePicker(state = picker) }
     }
 }
 
@@ -545,10 +577,26 @@ private fun UsualsBody(onOpenStaples: () -> Unit) {
     val meals = state.usuals.filter { it.status == "active" }
     if (meals.isEmpty()) Text("No usuals yet.", color = InkMuted)
     meals.forEach { meal ->
-        Column(Modifier.fillMaxWidth().padding(vertical = 6.dp).clip(RoundedCornerShape(16.dp)).background(CardRest).padding(14.dp)) {
-            Text(meal.name, color = Ink, fontWeight = FontWeight.SemiBold)
-            Text(ProfileRules.slotSubtitle(meal.mealSlot), color = InkMuted, fontSize = 12.sp)
-            Text("Log", color = Mint, modifier = Modifier.padding(top = 6.dp).clickable { vm.logUsual(meal.id) })
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .padding(vertical = 6.dp)
+                .clip(RoundedCornerShape(16.dp))
+                .background(CardRest)
+                .padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            MealThumb(meal.mealSlot, meal.name)
+            Column(Modifier.weight(1f).padding(start = 12.dp)) {
+                Text(meal.name, color = Ink, fontWeight = FontWeight.SemiBold)
+                Text(ProfileRules.slotSubtitle(meal.mealSlot), color = InkMuted, fontSize = 12.sp)
+                Text(
+                    "Log",
+                    color = Mint,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.padding(top = 6.dp).clickable { vm.logUsual(meal.id) },
+                )
+            }
         }
     }
     Spacer(Modifier.height(12.dp))
@@ -635,6 +683,42 @@ private fun NavItem(icon: ImageVector, label: String, selected: Boolean, onClick
             maxLines = 2,
             lineHeight = 12.sp,
         )
+    }
+}
+
+@Composable
+private fun MealThumb(mealSlot: String, name: String) {
+    val icon = when (mealSlot) {
+        "breakfast" -> Icons.Filled.BakeryDining
+        "lunch" -> Icons.Filled.Restaurant
+        "dinner" -> Icons.Filled.Nightlight
+        "snack" -> Icons.Filled.Grain
+        else -> Icons.Filled.Restaurant
+    }
+    val tint = when (mealSlot) {
+        "breakfast" -> Amber
+        "lunch" -> Mint
+        "dinner" -> Cyan
+        else -> InkMuted
+    }
+    Box(
+        Modifier
+            .size(56.dp)
+            .clip(RoundedCornerShape(14.dp))
+            .background(tint.copy(alpha = 0.16f))
+            .border(1.dp, tint.copy(alpha = 0.28f), RoundedCornerShape(14.dp)),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(22.dp))
+            Text(
+                name.take(1).uppercase(Locale.US),
+                color = tint,
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.padding(top = 2.dp),
+            )
+        }
     }
 }
 
