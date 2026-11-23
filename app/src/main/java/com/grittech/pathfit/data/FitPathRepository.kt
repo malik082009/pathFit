@@ -71,6 +71,7 @@ class FitPathRepository(context: Context) {
 
     fun currentUid(): String? = auth.currentUser?.uid
     fun currentDisplayName(): String? = auth.currentUser?.displayName
+    fun currentEmail(): String? = auth.currentUser?.email
     fun isOnline(): Boolean {
         val manager = appContext.getSystemService(ConnectivityManager::class.java) ?: return true
         val network = manager.activeNetwork ?: return false
@@ -291,8 +292,11 @@ class FitPathRepository(context: Context) {
         return try {
             val batch = db.batch()
             cards.forEach { card ->
-                val ref = db.collection("users").document(uid).collection("usualMeals").document(UUID.randomUUID().toString())
-                batch.set(ref, card.toUsualMap())
+                val id = UUID.randomUUID().toString()
+                batch.set(
+                    db.collection("users").document(uid).collection("usualMeals").document(id),
+                    card.toUsualMap(id),
+                )
             }
             batch.commit().await()
             Outcome.Ok(cards.size)
@@ -308,7 +312,7 @@ class FitPathRepository(context: Context) {
         return try {
             val id = UUID.randomUUID().toString()
             val ref = db.collection("users").document(uid).collection("usualMeals").document(id)
-            ref.set(plateToUsualMap(name, slot, items)).await()
+            ref.set(plateToUsualMap(id, name, slot, items)).await()
             if (logToday) {
                 logUsual(id, dayKey)
             }
@@ -316,6 +320,60 @@ class FitPathRepository(context: Context) {
         } catch (error: Exception) {
             Outcome.Err(error.fitMessage())
         }
+    }
+
+    suspend fun setUsualPinned(usualId: String, pinned: Boolean): Outcome<Unit> {
+        val uid = currentUid() ?: return Outcome.Err("Sign in required")
+        return try {
+            db.collection("users").document(uid).collection("usualMeals").document(usualId).update(
+                mapOf(
+                    "pinned" to pinned,
+                    "updatedAt" to FieldValue.serverTimestamp(),
+                ),
+            ).await()
+            Outcome.Ok(Unit)
+        } catch (error: Exception) {
+            Outcome.Err(error.fitMessage())
+        }
+    }
+
+    suspend fun skipMealSlot(dayKey: String, slot: String, timezone: String): Outcome<String> {
+        val uid = currentUid() ?: return Outcome.Err("Sign in required")
+        val id = UUID.randomUUID().toString()
+        val tz = timezone.ifBlank { "Asia/Karachi" }
+        return try {
+            db.collection("users").document(uid).collection("mealLogs").document(id).set(
+                mapOf(
+                    "schemaVersion" to 1,
+                    "clientMutationId" to id,
+                    "dayKey" to dayKey,
+                    "loggedAt" to Timestamp.now(),
+                    "timezone" to tz,
+                    "mealSlot" to slot,
+                    "source" to "manual",
+                    "dishId" to null,
+                    "customName" to null,
+                    "usualMealId" to null,
+                    "userRecipeId" to null,
+                    "status" to "skipped",
+                    "portion" to null,
+                    "nutritionSnapshot" to null,
+                    "revision" to 1,
+                    "deletedAt" to null,
+                    "createdAt" to FieldValue.serverTimestamp(),
+                    "updatedAt" to FieldValue.serverTimestamp(),
+                ),
+            ).await()
+            Outcome.Ok(id)
+        } catch (error: Exception) {
+            Outcome.Err(error.fitMessage())
+        }
+    }
+
+    suspend fun exportUserData(): Outcome<Map<String, Any?>> = try {
+        Outcome.Ok(call("userExportData", emptyMap(), 60))
+    } catch (error: Exception) {
+        Outcome.Err(error.fitMessage())
     }
 
     suspend fun logUsual(usualId: String, dayKey: String): Outcome<List<String>> {
@@ -346,7 +404,14 @@ class FitPathRepository(context: Context) {
         val batch = db.batch()
         ids.forEach { id ->
             val ref = db.collection("users").document(uid).collection("mealLogs").document(id)
-            batch.update(ref, mapOf("deletedAt" to FieldValue.serverTimestamp(), "status" to "skipped"))
+            batch.update(
+                ref,
+                mapOf(
+                    "deletedAt" to FieldValue.serverTimestamp(),
+                    "status" to "skipped",
+                    "updatedAt" to FieldValue.serverTimestamp(),
+                ),
+            )
         }
         batch.commit().await()
     }
@@ -535,34 +600,44 @@ class FitPathRepository(context: Context) {
         items: List<UsualItem>,
     ): Outcome<List<String>> {
         if (items.isEmpty()) return Outcome.Err("Nothing to log")
+        val timezone = drafts.load(uid)?.timezone?.ifBlank { null } ?: "Asia/Karachi"
         val batch = db.batch()
         val ids = items.map { UUID.randomUUID().toString() }
         items.zip(ids).forEach { (item, id) ->
             val nutrition = resolveNutrition(item)
             val ref = db.collection("users").document(uid).collection("mealLogs").document(id)
-            val payload = hashMapOf<String, Any?>(
+            // Allowlisted keys only — unknown fields (e.g. episodeTitle) → PERMISSION_DENIED.
+            // Keep deletedAt:null present; do not strip required nulls.
+            val payload = linkedMapOf<String, Any?>(
                 "schemaVersion" to 1,
-                "clientMutationId" to UUID.randomUUID().toString(),
+                "clientMutationId" to id,
                 "dayKey" to dayKey,
-                "mealSlot" to slot,
-                "status" to "eaten",
-                "title" to item.name.ifBlank { title },
-                "episodeTitle" to title,
-                "dishId" to item.dishId,
-                "userRecipeId" to item.userRecipeId,
-                "portion" to item.portion,
-                "oilLevel" to item.oilLevel,
-                "unit" to item.unit,
-                "count" to item.count,
-                "usualMealId" to usualId,
                 "loggedAt" to Timestamp.now(),
+                "timezone" to timezone,
+                "mealSlot" to slot,
+                "source" to "manual",
+                "dishId" to item.dishId,
+                "customName" to item.name.ifBlank { title }.ifBlank { null },
+                "usualMealId" to usualId,
+                "userRecipeId" to item.userRecipeId,
+                "oilLevel" to item.oilLevel,
+                "status" to "eaten",
+                "portion" to item.portion,
+                "count" to item.count.takeIf { it > 0 },
+                "unit" to item.unit.takeIf { it.isNotBlank() },
                 "nutritionSnapshot" to mapOf(
-                    "kcal" to nutrition.kcal,
+                    "calories" to nutrition.kcal,
                     "proteinG" to nutrition.proteinG,
                     "carbsG" to nutrition.carbsG,
                     "fatG" to nutrition.fatG,
+                    "confidenceClass" to "B",
                 ),
-            ).filterValues { it != null }
+                "planVersionId" to null,
+                "revision" to 1,
+                "deletedAt" to null,
+                "createdAt" to FieldValue.serverTimestamp(),
+                "updatedAt" to FieldValue.serverTimestamp(),
+            )
             batch.set(ref, payload)
         }
         if (usualId != null) {
@@ -716,9 +791,9 @@ class FitPathRepository(context: Context) {
         "updatedAt" to FieldValue.serverTimestamp(),
     )
 
-    private fun CommonCard.toUsualMap(): Map<String, Any?> = mapOf(
+    private fun CommonCard.toUsualMap(mutationId: String): Map<String, Any?> = mapOf(
         "schemaVersion" to 1,
-        "clientMutationId" to UUID.randomUUID().toString(),
+        "clientMutationId" to mutationId,
         "mealSlot" to mealSlot,
         "name" to nameEn,
         "items" to items.map { it.toUsualItemMap() },
@@ -741,9 +816,9 @@ class FitPathRepository(context: Context) {
         "count" to defaultPortion,
     ).filterValues { it != null }
 
-    private fun plateToUsualMap(name: String, slot: String, items: List<PlateItem>): Map<String, Any?> = mapOf(
+    private fun plateToUsualMap(mutationId: String, name: String, slot: String, items: List<PlateItem>): Map<String, Any?> = mapOf(
         "schemaVersion" to 1,
-        "clientMutationId" to UUID.randomUUID().toString(),
+        "clientMutationId" to mutationId,
         "mealSlot" to slot,
         "name" to name,
         "items" to items.map { item ->
@@ -874,8 +949,11 @@ class FitPathRepository(context: Context) {
             dayKey = data.fitString("dayKey") ?: "",
             mealSlot = data.fitString("mealSlot") ?: "snack",
             status = data.fitString("status") ?: "eaten",
-            title = data.fitString("episodeTitle") ?: data.fitString("title") ?: "Meal",
-            kcal = nutrition.fitInt("kcal") ?: 0,
+            title = data.fitString("customName")
+                ?: data.fitString("episodeTitle")
+                ?: data.fitString("title")
+                ?: "Meal",
+            kcal = nutrition.fitInt("calories") ?: nutrition.fitInt("kcal") ?: 0,
             proteinG = nutrition.fitNumber("proteinG") ?: 0.0,
             carbsG = nutrition.fitNumber("carbsG") ?: 0.0,
             fatG = nutrition.fitNumber("fatG") ?: 0.0,

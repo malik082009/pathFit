@@ -505,8 +505,8 @@ fun BuildMealScreen(onBack: () -> Unit) {
         if (state.error != null) Text(state.error ?: "", color = Color(0xFFFFB4AB))
         Spacer(Modifier.height(8.dp))
         PrimaryButton(
-            "Save to Your Usuals (Don't Log Today)",
-            onClick = { vm.saveCustom(false) },
+            "Save as Usual & Log (1-Tap Ready)",
+            onClick = { vm.saveCustom(true) },
             enabled = !state.busy && custom.items.isNotEmpty(),
         )
         Spacer(Modifier.height(8.dp))
@@ -516,18 +516,28 @@ fun BuildMealScreen(onBack: () -> Unit) {
                 .height(52.dp)
                 .clip(CircleShape)
                 .border(1.dp, Mint.copy(alpha = 0.45f), CircleShape)
-                .clickable(enabled = !state.busy && custom.items.isNotEmpty()) { vm.saveCustom(true) },
+                .clickable(enabled = !state.busy && custom.items.isNotEmpty()) { vm.logCustomOnce() },
             horizontalArrangement = Arrangement.Center,
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Icon(Icons.Filled.DoneAll, contentDescription = null, tint = Mint)
-            Text("  Save as Usual & Log to Today", color = Mint, fontWeight = FontWeight.SemiBold)
+            Text("  Log Once Without Saving", color = Mint, fontWeight = FontWeight.SemiBold)
         }
+        Text(
+            "Save to Your Usuals (Don't Log Today)",
+            color = Mint,
+            textAlign = TextAlign.Center,
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(enabled = !state.busy && custom.items.isNotEmpty()) { vm.saveCustom(false) }
+                .padding(vertical = 12.dp),
+        )
         Text(
             "Cancel & Return to Staples",
             color = InkMuted,
             textAlign = TextAlign.Center,
-            modifier = Modifier.fillMaxWidth().clickable(onClick = onBack).padding(vertical = 12.dp),
+            modifier = Modifier.fillMaxWidth().clickable(onClick = onBack).padding(vertical = 8.dp),
         )
         Text(
             "Or create custom recipe",

@@ -11,6 +11,7 @@ import com.grittech.pathfit.domain.DayClock
 import com.grittech.pathfit.domain.DishSearch
 import com.grittech.pathfit.domain.PaceLogic
 import com.grittech.pathfit.domain.PlaceResolver
+import com.grittech.pathfit.domain.ProfileRules
 import com.grittech.pathfit.model.CommonCard
 import com.grittech.pathfit.model.CustomMealDraft
 import com.grittech.pathfit.model.DishHit
@@ -55,6 +56,9 @@ object Routes {
     const val Ingredients = "ingredients"
     const val Recipe = "recipe"
     const val Home = "home"
+    const val QuickLog = "quick_log"
+    const val Stats = "stats"
+    const val Habits = "habits"
 }
 
 data class FitUiState(
@@ -324,6 +328,120 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         _state.update { it.copy(pickerMode = mode, dishQuery = "", dishTag = null, selectedDishId = null, dishQty = 1) }
         go(Routes.Dishes)
         searchDishes("")
+    }
+
+    fun openQuickLog(slot: String? = null) {
+        val chosen = slot ?: _state.value.selectedSlot
+        _state.update { it.copy(selectedSlot = chosen) }
+        ensureSlotSuggestions()
+        go(Routes.QuickLog)
+    }
+
+    fun openStats() = go(Routes.Stats)
+
+    fun openHabits() = go(Routes.Habits)
+
+    fun toggleUsualPin(usualId: String) {
+        val usual = _state.value.usuals.firstOrNull { it.id == usualId } ?: return
+        viewModelScope.launch {
+            when (val result = repo.setUsualPinned(usualId, !usual.pinned)) {
+                is Outcome.Err -> _state.update { it.copy(error = result.message) }
+                is Outcome.Ok -> Unit
+            }
+        }
+    }
+
+    fun skipPendingSlot(slot: String) {
+        viewModelScope.launch {
+            when (
+                val result = repo.skipMealSlot(
+                    _state.value.dayKey,
+                    slot,
+                    _state.value.draft.timezone,
+                )
+            ) {
+                is Outcome.Err -> _state.update { it.copy(error = result.message) }
+                is Outcome.Ok -> _state.update { it.copy(snackbar = "Skipped ${ProfileRules.slotTitle(slot)}") }
+            }
+        }
+    }
+
+    fun logCustomOnce() {
+        val custom = _state.value.custom
+        if (custom.items.isEmpty()) return
+        viewModelScope.launch {
+            _state.update { it.copy(busy = true, error = null) }
+            val items = custom.items.map { plate ->
+                UsualItem(
+                    dishId = plate.dishId,
+                    userRecipeId = plate.userRecipeId,
+                    name = plate.name,
+                    portion = plate.portion,
+                    oilLevel = plate.oilLevel,
+                    unit = plate.unit,
+                    count = plate.portion,
+                    kcalPerServing = plate.kcalPerServing,
+                    proteinPer = plate.proteinPer,
+                    carbsPer = plate.carbsPer,
+                    fatPer = plate.fatPer,
+                    addedFatKcal = plate.addedFatKcal,
+                )
+            }
+            when (val result = repo.logItems(_state.value.dayKey, custom.mealSlot, custom.name, items, null)) {
+                is Outcome.Err -> _state.update { it.copy(busy = false, error = result.message) }
+                is Outcome.Ok -> {
+                    _state.update {
+                        it.copy(
+                            busy = false,
+                            undoIds = result.value,
+                            snackbar = logMessage("Logged ${custom.name}"),
+                        )
+                    }
+                    go(Routes.Home, clear = true)
+                }
+            }
+        }
+    }
+
+    fun editUsualBlueprint(usualId: String) {
+        val usual = _state.value.usuals.firstOrNull { it.id == usualId } ?: return
+        _state.update {
+            it.copy(
+                custom = CustomMealDraft(
+                    mealSlot = usual.mealSlot,
+                    name = usual.name,
+                    items = usual.items.mapIndexed { index, item ->
+                        PlateItem(
+                            key = "${item.dishId ?: item.name}-$index",
+                            dishId = item.dishId,
+                            userRecipeId = item.userRecipeId,
+                            name = item.name,
+                            portion = item.portion,
+                            unit = item.unit,
+                            kcalPerServing = item.kcalPerServing,
+                            proteinPer = item.proteinPer,
+                            carbsPer = item.carbsPer,
+                            fatPer = item.fatPer,
+                            addedFatKcal = item.addedFatKcal,
+                            oilLevel = item.oilLevel,
+                        )
+                    },
+                ),
+            )
+        }
+        go(Routes.BuildMeal)
+    }
+
+    fun exportHealthData() {
+        viewModelScope.launch {
+            _state.update { it.copy(busy = true, error = null) }
+            when (val result = repo.exportUserData()) {
+                is Outcome.Err -> _state.update { it.copy(busy = false, error = result.message, snackbar = result.message) }
+                is Outcome.Ok -> _state.update {
+                    it.copy(busy = false, snackbar = "Export ready (${result.value.keys.size} sections)")
+                }
+            }
+        }
     }
 
     fun searchDishes(query: String, tag: String? = _state.value.dishTag) {

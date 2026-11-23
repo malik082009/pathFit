@@ -17,14 +17,17 @@ import com.grittech.pathfit.ui.screens.BiometricsScreen
 import com.grittech.pathfit.ui.screens.BuildMealScreen
 import com.grittech.pathfit.ui.screens.DietScreen
 import com.grittech.pathfit.ui.screens.DishPickerScreen
+import com.grittech.pathfit.ui.screens.HabitsLadderScreen
 import com.grittech.pathfit.ui.screens.HomeScreen
 import com.grittech.pathfit.ui.screens.IngredientScreen
 import com.grittech.pathfit.ui.screens.PaceScreen
 import com.grittech.pathfit.ui.screens.PreviewScreen
+import com.grittech.pathfit.ui.screens.QuickLogScreen
 import com.grittech.pathfit.ui.screens.RecipeScreen
 import com.grittech.pathfit.ui.screens.SignInScreen
 import com.grittech.pathfit.ui.screens.SplashScreen
 import com.grittech.pathfit.ui.screens.StaplesScreen
+import com.grittech.pathfit.ui.screens.StatsScreen
 import com.grittech.pathfit.ui.theme.FitPathTheme
 
 class MainActivity : ComponentActivity() {
@@ -76,7 +79,31 @@ class MainActivity : ComponentActivity() {
                     composable(Routes.Dishes) { DishPickerScreen(onBack = { nav.popBackStack() }) }
                     composable(Routes.Ingredients) { IngredientScreen(onBack = { nav.popBackStack() }) }
                     composable(Routes.Recipe) { RecipeScreen(onBack = { nav.popBackStack() }) }
-                    composable(Routes.Home) { HomeScreen(onOpenStaples = { nav.navigate(Routes.Staples) }) }
+                    composable(Routes.Home) {
+                        HomeScreen(
+                            onOpenStaples = { nav.navigate(Routes.Staples) },
+                            onOpenQuickLog = { slot -> vm.openQuickLog(slot) },
+                            onOpenStats = { vm.openStats() },
+                            onOpenHabits = { vm.openHabits() },
+                            onOpenBuildMeal = { nav.navigate(Routes.BuildMeal) },
+                        )
+                    }
+                    composable(Routes.QuickLog) {
+                        QuickLogScreen(
+                            onBack = { nav.popBackStack() },
+                            onBuildMeal = { nav.navigate(Routes.BuildMeal) },
+                        )
+                    }
+                    composable(Routes.Stats) { StatsScreen(onBack = { nav.popBackStack() }) }
+                    composable(Routes.Habits) {
+                        HabitsLadderScreen(
+                            onBack = { nav.popBackStack() },
+                            onLogMeal = {
+                                nav.popBackStack()
+                                vm.openQuickLog(vm.state.value.selectedSlot.ifBlank { "lunch" })
+                            },
+                        )
+                    }
                 }
             }
         }

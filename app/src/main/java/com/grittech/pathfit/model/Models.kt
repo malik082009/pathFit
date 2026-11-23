@@ -208,6 +208,50 @@ data class MealLog(
     val usualMealId: String?,
 )
 
+data class MealEpisode(
+    val key: String,
+    val mealSlot: String,
+    val title: String,
+    val loggedAt: Long,
+    val kcal: Int,
+    val proteinG: Double,
+    val carbsG: Double,
+    val fatG: Double,
+    val status: String,
+    val usualMealId: String?,
+    val lines: List<MealLog>,
+)
+
+data class StatsHorizon(val label: String, val days: Int)
+
+data class DayEnergy(
+    val dayKey: String,
+    val kcal: Int,
+    val proteinG: Double,
+    val carbsG: Double,
+    val fatG: Double,
+    val waterMl: Int,
+    val logged: Boolean,
+)
+
+data class StatsRollup(
+    val dayKeys: List<String>,
+    val days: List<DayEnergy>,
+    val daysLogged: Int,
+    val daysMet: Int,
+    val waterDaysMet: Int,
+    val meanKcal: Int?,
+    val netDeficit: Int?,
+    val meanProtein: Double?,
+    val meanCarbs: Double?,
+    val meanFat: Double?,
+    val stabilityScore: Int,
+    val stabilityLetter: String,
+    val oilLightPct: Int,
+    val oilNormalPct: Int,
+    val oilRichPct: Int,
+)
+
 data class MacroTotals(
     val kcal: Int = 0,
     val proteinG: Double = 0.0,

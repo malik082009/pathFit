@@ -2,13 +2,17 @@ package com.grittech.pathfit.domain
 
 import com.grittech.pathfit.model.CommonCard
 import com.grittech.pathfit.model.CommonItem
+import com.grittech.pathfit.model.DayEnergy
 import com.grittech.pathfit.model.DishHit
 import com.grittech.pathfit.model.IngredientHit
 import com.grittech.pathfit.model.MacroTotals
+import com.grittech.pathfit.model.MealEpisode
+import com.grittech.pathfit.model.MealLog
 import com.grittech.pathfit.model.OnboardingDraft
 import com.grittech.pathfit.model.PlateItem
 import com.grittech.pathfit.model.PreviewUi
 import com.grittech.pathfit.model.RegionOption
+import com.grittech.pathfit.model.StatsRollup
 import com.grittech.pathfit.model.Targets
 import com.grittech.pathfit.model.UsualItem
 import java.text.SimpleDateFormat
@@ -213,12 +217,6 @@ object DayClock {
         return cal.get(Calendar.HOUR_OF_DAY)
     }
 
-    fun clockLabel(timezone: String, now: Long = System.currentTimeMillis()): String {
-        val fmt = SimpleDateFormat("h:mm a", Locale.US)
-        fmt.timeZone = zone(timezone)
-        return fmt.format(now)
-    }
-
     fun defaultSlot(hour: Int): String = when (hour) {
         in 5..9 -> "breakfast"
         in 10..14 -> "lunch"
@@ -226,11 +224,143 @@ object DayClock {
         else -> "snack"
     }
 
+    fun defaultSlot(timezone: String, now: Long = System.currentTimeMillis()): String =
+        defaultSlot(hour(timezone, now))
+
+    fun dayKeysInclusive(endKey: String, days: Int, timezone: String): List<String> {
+        val end = resolveKey(endKey, timezone)
+        return (days - 1 downTo 0).map { shiftKey(end, -it, timezone) }
+    }
+
+    fun monthKeysToDate(endKey: String, timezone: String): List<String> {
+        val end = resolveKey(endKey, timezone)
+        val fmt = SimpleDateFormat("yyyy-MM-dd", Locale.US)
+        val endDate = runCatching { fmt.parse(end) }.getOrNull() ?: return listOf(end)
+        val cal = Calendar.getInstance(zone(timezone))
+        cal.time = endDate
+        cal.set(Calendar.DAY_OF_MONTH, 1)
+        val keys = mutableListOf<String>()
+        while (true) {
+            val key = fmt.format(cal.time)
+            keys += key
+            if (key >= end) break
+            cal.add(Calendar.DAY_OF_YEAR, 1)
+        }
+        return keys
+    }
+
+    fun clockLabel(timezone: String, now: Long = System.currentTimeMillis()): String {
+        val fmt = SimpleDateFormat("h:mm a", Locale.US)
+        fmt.timeZone = zone(timezone)
+        return fmt.format(now)
+    }
+
     fun slotWindow(slot: String): String = when (slot) {
         "breakfast" -> "8:00 AM"
         "lunch" -> "1:00 PM"
         "dinner" -> "8:00 PM"
         else -> "5:00 PM"
+    }
+}
+
+object LogEpisodes {
+    fun group(logs: List<MealLog>): List<MealEpisode> {
+        val live = logs.filter { !it.deleted }
+        val grouped = linkedMapOf<String, MutableList<MealLog>>()
+        live.sortedBy { it.loggedAt }.forEach { log ->
+            val key = log.usualMealId?.takeIf { it.isNotBlank() }
+                ?: "${log.mealSlot}:${log.loggedAt / 2_000L}"
+            grouped.getOrPut(key) { mutableListOf() }.add(log)
+        }
+        return grouped.map { (key, lines) ->
+            val first = lines.first()
+            val episodeTitle = when {
+                lines.size == 1 -> first.title
+                else -> lines.map { it.title }.distinct().joinToString(" + ")
+            }
+            MealEpisode(
+                key = key,
+                mealSlot = first.mealSlot,
+                title = episodeTitle,
+                loggedAt = lines.minOf { it.loggedAt },
+                kcal = lines.filter { it.status in setOf("eaten", "partial") }.sumOf { it.kcal },
+                proteinG = lines.filter { it.status in setOf("eaten", "partial") }.sumOf { it.proteinG },
+                carbsG = lines.filter { it.status in setOf("eaten", "partial") }.sumOf { it.carbsG },
+                fatG = lines.filter { it.status in setOf("eaten", "partial") }.sumOf { it.fatG },
+                status = when {
+                    lines.any { it.status == "eaten" } -> "eaten"
+                    lines.any { it.status == "partial" } -> "partial"
+                    else -> first.status
+                },
+                usualMealId = first.usualMealId,
+                lines = lines,
+            )
+        }.sortedBy { it.loggedAt }
+    }
+
+    fun pendingSlot(logs: List<MealLog>, timezone: String): String? {
+        val filled = logs.filter { !it.deleted && it.status in setOf("eaten", "partial", "skipped") }
+            .map { it.mealSlot }.toSet()
+        val preferred = DayClock.defaultSlot(timezone)
+        if (preferred !in filled) return preferred
+        return listOf("breakfast", "lunch", "dinner", "snack").firstOrNull { it !in filled }
+    }
+}
+
+object StatsLogic {
+    fun rollup(
+        dayKeys: List<String>,
+        logs: List<MealLog>,
+        waterByDay: Map<String, Int>,
+        calorieTarget: Int?,
+        oilLevels: List<String>,
+    ): StatsRollup {
+        val target = calorieTarget ?: 0
+        val days = dayKeys.map { key ->
+            val dayLogs = logs.filter { !it.deleted && it.dayKey == key && it.status in setOf("eaten", "partial") }
+            DayEnergy(
+                dayKey = key,
+                kcal = dayLogs.sumOf { it.kcal },
+                proteinG = dayLogs.sumOf { it.proteinG },
+                carbsG = dayLogs.sumOf { it.carbsG },
+                fatG = dayLogs.sumOf { it.fatG },
+                waterMl = waterByDay[key] ?: 0,
+                logged = dayLogs.isNotEmpty(),
+            )
+        }
+        val logged = days.filter { it.logged }
+        val daysMet = days.count { it.logged && target > 0 && it.kcal <= (target * 1.10).roundToInt() }
+        val waterDaysMet = days.count { it.waterMl >= 2000 }
+        val daysInRange = dayKeys.size.coerceAtLeast(1)
+        val score = (
+            0.40 * (logged.size.toDouble() / daysInRange) * 100 +
+                0.40 * (daysMet.toDouble() / daysInRange) * 100 +
+                0.20 * (waterDaysMet.toDouble() / daysInRange) * 100
+            ).roundToInt().coerceIn(0, 100)
+        val oilTotal = oilLevels.size.coerceAtLeast(1)
+        return StatsRollup(
+            dayKeys = dayKeys,
+            days = days,
+            daysLogged = logged.size,
+            daysMet = daysMet,
+            waterDaysMet = waterDaysMet,
+            meanKcal = logged.takeIf { it.isNotEmpty() }?.map { it.kcal }?.average()?.roundToInt(),
+            netDeficit = logged.takeIf { it.isNotEmpty() && target > 0 }?.sumOf { target - it.kcal },
+            meanProtein = logged.takeIf { it.isNotEmpty() }?.map { it.proteinG }?.average(),
+            meanCarbs = logged.takeIf { it.isNotEmpty() }?.map { it.carbsG }?.average(),
+            meanFat = logged.takeIf { it.isNotEmpty() }?.map { it.fatG }?.average(),
+            stabilityScore = score,
+            stabilityLetter = when {
+                score >= 90 -> "A+"
+                score >= 80 -> "A"
+                score >= 70 -> "B"
+                score >= 60 -> "C"
+                else -> "D"
+            },
+            oilLightPct = ((oilLevels.count { it == "light" } * 100.0) / oilTotal).roundToInt(),
+            oilNormalPct = ((oilLevels.count { it == "normal" } * 100.0) / oilTotal).roundToInt(),
+            oilRichPct = ((oilLevels.count { it == "rich" } * 100.0) / oilTotal).roundToInt(),
+        )
     }
 }
 
@@ -598,8 +728,15 @@ object ProfileRules {
             ratio <= 1.15 ->
                 "Approaching" to "Intake is nearing today's fuel target."
             else ->
-                "Above" to "Intake is past today's fuel target. Later meals can stay lighter."
+                "Over target" to "Energy above today’s plan — adjust the next meal gently"
         }
+    }
+
+    fun softTip(kcal: Int, proteinG: Double, carbsG: Double): String = when {
+        proteinG >= 30 -> "High Protein"
+        carbsG >= 60 -> "Carb Dense"
+        kcal in 1..250 -> "Low Impact"
+        else -> "Glycemic Steady"
     }
 
     fun strategyCopy(draft: OnboardingDraft): Pair<String, String> {
