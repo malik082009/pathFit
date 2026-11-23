@@ -303,10 +303,15 @@ fun BiometricsScreen(onNext: () -> Unit, onBack: () -> Unit) {
                 vm.markStep("activity_goals")
                 onNext()
             })
-            BackLine("Back to About You", onBack)
         },
     ) {
-        StepHeading("STEP 2 OF 5 • CORE BIOMETRICS", "Your Biometrics", "Calibrate your biological baseline and metabolic floor.", 0.4f)
+        StepHeading(
+            "STEP 2 OF 5 • CORE BIOMETRICS",
+            "Your Biometrics",
+            "Calibrate your biological baseline and metabolic floor.",
+            0.4f,
+            onBack = onBack,
+        )
         Spacer(Modifier.height(18.dp))
         Column(
             Modifier
@@ -482,10 +487,15 @@ fun ActivityScreen(onNext: () -> Unit, onBack: () -> Unit) {
                 vm.markStep("target_pace")
                 onNext()
             })
-            BackLine("Back to Body Measurements", onBack)
         },
     ) {
-        StepHeading("STEP 3 OF 5 • ACTIVITY & INTENT", "Activity & Goals", "Choose your daily movement level and target pace.", 0.6f)
+        StepHeading(
+            "STEP 3 OF 5 • ACTIVITY & INTENT",
+            "Activity & Goals",
+            "Choose your daily movement level and target pace.",
+            0.6f,
+            onBack = onBack,
+        )
         Spacer(Modifier.height(22.dp))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             Text("DAILY ACTIVITY LEVEL", color = Ink, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.6.sp)
@@ -542,28 +552,17 @@ fun PaceScreen(onNext: () -> Unit, onBack: () -> Unit) {
                 vm.markStep("diet_safeguards")
                 onNext()
             })
-            BackLine("Back to Activity & Intent", onBack)
         },
     ) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                if (surplus) "STEP 4 OF 5 • PACE & SURPLUS" else "STEP 4 OF 5 • PACE & DAILY BURN",
-                color = Mint,
-                fontSize = 11.sp,
-                fontWeight = FontWeight.Bold,
-                letterSpacing = 0.5.sp,
-                modifier = Modifier.weight(1f),
-            )
-            Text("80% CALIBRATED", color = InkMuted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-        }
-        Spacer(Modifier.height(8.dp))
-        Box(Modifier.fillMaxWidth().height(6.dp).clip(CircleShape).background(Color(0xFF252A39))) {
-            Box(Modifier.fillMaxWidth(0.8f).height(6.dp).clip(CircleShape).background(Mint))
-        }
-        Spacer(Modifier.height(16.dp))
-        Text(PaceLogic.headline(draft.goal), color = Ink, fontSize = 28.sp, fontWeight = FontWeight.Bold, lineHeight = 34.sp)
-        Spacer(Modifier.height(6.dp))
-        Text(PaceLogic.subhead(draft.goal), color = InkMuted, fontSize = 14.sp, lineHeight = 20.sp)
+        StepHeading(
+            if (surplus) "STEP 4 OF 5 • PACE & SURPLUS" else "STEP 4 OF 5 • PACE & DAILY BURN",
+            PaceLogic.headline(draft.goal),
+            PaceLogic.subhead(draft.goal),
+            0.8f,
+            onBack = onBack,
+            progressLabel = "80% CALIBRATED",
+            titleAlignStart = true,
+        )
         Spacer(Modifier.height(16.dp))
 
         Column(
@@ -787,27 +786,28 @@ fun DietScreen(onBack: () -> Unit) {
                 onClick = { vm.calculateTargets() },
                 enabled = !state.busy,
             )
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                Row(
-                    Modifier.clickable(onClick = onBack).padding(vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null, tint = InkMuted, modifier = Modifier.size(16.dp))
-                    Text("  Back to Lifestyle", color = InkMuted, fontSize = 13.sp)
-                }
-                Text(
-                    "Skip for now",
-                    color = InkMuted,
-                    fontSize = 13.sp,
-                    modifier = Modifier.clickable {
+            Text(
+                "Skip for now",
+                color = InkMuted,
+                fontSize = 13.sp,
+                textAlign = TextAlign.Center,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable {
                         vm.editDraft { it.copy(dietTypes = emptyList(), allergenFlags = emptyList()) }
                         vm.calculateTargets()
-                    }.padding(vertical = 8.dp),
-                )
-            }
+                    }
+                    .padding(vertical = 8.dp),
+            )
         },
     ) {
-        StepHeading("STEP 5 OF 5 • DIET & SAFEGUARDS", "Diet & Safeguards", "Select your dietary pattern and any allergies to filter safe foods.", 1f)
+        StepHeading(
+            "STEP 5 OF 5 • DIET & SAFEGUARDS",
+            "Diet & Safeguards",
+            "Select your dietary pattern and any allergies to filter safe foods.",
+            1f,
+            onBack = onBack,
+        )
         Spacer(Modifier.height(18.dp))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             Text("DIETARY PATTERN", color = InkMuted, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.6.sp)
@@ -895,32 +895,65 @@ private fun OnboardScaffold(footer: @Composable () -> Unit, content: @Composable
 }
 
 @Composable
-private fun StepHeading(kicker: String, title: String, body: String, progress: Float) {
-    Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(kicker, color = Mint, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.8.sp, textAlign = TextAlign.Center)
+private fun StepHeading(
+    kicker: String,
+    title: String,
+    body: String,
+    progress: Float,
+    onBack: (() -> Unit)? = null,
+    progressLabel: String? = null,
+    titleAlignStart: Boolean = false,
+) {
+    val titleAlign = if (titleAlignStart) TextAlign.Start else TextAlign.Center
+    val columnAlign = if (titleAlignStart) Alignment.Start else Alignment.CenterHorizontally
+    Column(Modifier.fillMaxWidth(), horizontalAlignment = columnAlign) {
+        Row(
+            Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            if (onBack != null) {
+                Icon(
+                    Icons.AutoMirrored.Filled.ArrowBack,
+                    contentDescription = "Back",
+                    tint = Ink,
+                    modifier = Modifier
+                        .clickable(onClick = onBack)
+                        .padding(8.dp)
+                        .size(22.dp),
+                )
+            } else {
+                Spacer(Modifier.size(38.dp))
+            }
+            Text(
+                kicker,
+                color = Mint,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 0.8.sp,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.weight(1f),
+            )
+            if (progressLabel != null) {
+                Text(
+                    progressLabel,
+                    color = InkMuted,
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Bold,
+                    textAlign = TextAlign.End,
+                )
+            } else {
+                Spacer(Modifier.size(38.dp))
+            }
+        }
         Spacer(Modifier.height(10.dp))
         Box(Modifier.fillMaxWidth().height(6.dp).clip(CircleShape).background(Color(0xFF2A3142))) {
             Box(Modifier.fillMaxWidth(progress).height(6.dp).clip(CircleShape).background(Mint))
         }
         Spacer(Modifier.height(18.dp))
-        Text(title, color = Ink, fontSize = 30.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
+        Text(title, color = Ink, fontSize = 30.sp, fontWeight = FontWeight.Bold, textAlign = titleAlign, lineHeight = 34.sp)
         Spacer(Modifier.height(8.dp))
-        Text(body, color = InkMuted, fontSize = 14.sp, textAlign = TextAlign.Center, lineHeight = 20.sp)
-    }
-}
-
-@Composable
-private fun BackLine(label: String, onClick: () -> Unit) {
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(vertical = 8.dp),
-        horizontalArrangement = Arrangement.Center,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null, tint = InkMuted, modifier = Modifier.size(16.dp))
-        Text("  $label", color = InkMuted, fontSize = 13.sp)
+        Text(body, color = InkMuted, fontSize = 14.sp, textAlign = titleAlign, lineHeight = 20.sp)
     }
 }
 
